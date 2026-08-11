@@ -48,6 +48,7 @@ except ImportError:
     NumbaCanvas = None
     warmup_numba_jit = None
 
+
 def init_backend(backend_name: str):
     backend_name = backend_name.lower()
     if backend_name in ("curses", "c") and CursesCanvas:

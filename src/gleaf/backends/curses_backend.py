@@ -1,144 +1,167 @@
-"""Curses Backend with Xterm-256 Color Quantization and Delta Rendering."""
+"""Curses Backend with Native Bitmask Attribute Mapping & Terminal Management."""
 
 import curses
-from .base import BaseCanvas
-
-
-def _snap_to_6x6x6(val):
-    """Maps a 0-255 RGB value to the standard 0-5 Xterm cube index."""
-    if val < 48:
-        return 0
-    if val < 115:
-        return 1
-    if val < 155:
-        return 2
-    if val < 195:
-        return 3
-    if val < 235:
-        return 4
-    return 5
-
-
-def rgb_to_xterm256(r, g, b):
-    """Calculates the closest Xterm-256 color index without heavy math."""
-    if r == g == b:
-        if r < 8:
-            return 16
-        if r > 248:
-            return 231
-        return round(((r - 8) / 247) * 24) + 232
-    return 16 + (36 * _snap_to_6x6x6(r)) + (6 * _snap_to_6x6x6(g)) + _snap_to_6x6x6(b)
+from typing import Optional, Tuple
+from .base import BaseCanvas, UNSET
 
 
 class CursesCanvas(BaseCanvas):
-    def __init__(self, width=None, height=None):
-        super().__init__(width, height)
-        self.stdscr = None
+    def __init__(
+        self, 
+        stdscr=None, 
+        width: Optional[int] = None, 
+        height: Optional[int] = None
+    ):
+        self.stdscr = stdscr
+        
+        # Infer dimensions from stdscr if available
+        if self.stdscr is not None and (width is None or height is None):
+            max_y, max_x = self.stdscr.getmaxyx()
+            width = width if width is not None else max_x
+            height = height if height is not None else max_y
 
-        # Double Buffering
+        super().__init__(width or 80, height or 24)
+
+        self._color_pair_cache = {}
+        self._next_pair_id = 1
+
         self.grid = self._create_grid(self.width, self.height)
         self.front_buffer = self._create_grid(self.width, self.height)
 
-        # Curses Palette Manager
-        self._color_pairs = {}
-        self._next_pair_id = 1
-        self._max_pairs = 256
-
-    def _create_grid(self, w, h):
+    def _create_grid(self, w: int, h: int):
         return [
-            [{'char': ' ', 'fg': None, 'bg': None} for _ in range(w)]
+            [{"char": " ", "fg": None, "bg": None, "style": 0} for _ in range(w)] 
             for _ in range(h)
         ]
 
-    def resize(self, width: int, height: int):
-        self.width = width
-        self.height = height
-        curses.resizeterm(height, width)
-        self.grid = self._create_grid(self.width, self.height)
-        self.front_buffer = self._create_grid(self.width, self.height)
-        self.stdscr.clear()
+    def _snap_to_6x6x6(self, rgb: Tuple[int, int, int]) -> int:
+        r, g, b = rgb
+        r_i = round(r / 255 * 5)
+        g_i = round(g / 255 * 5)
+        b_i = round(b / 255 * 5)
+        return 16 + (36 * r_i) + (6 * g_i) + b_i
 
-    def _get_color_pair(self, fg, bg):
-        if fg is None and bg is None:
+    def _get_color_pair(self, fg: Optional[Tuple[int, int, int]], bg: Optional[Tuple[int, int, int]]) -> int:
+        if not curses.has_colors():
             return 0
 
-        fg_idx = rgb_to_xterm256(*fg) if fg else -1
-        bg_idx = rgb_to_xterm256(*bg) if bg else -1
-
+        fg_idx = self._snap_to_6x6x6(fg) if fg else -1
+        bg_idx = self._snap_to_6x6x6(bg) if bg else -1
         key = (fg_idx, bg_idx)
-        if key in self._color_pairs:
-            return self._color_pairs[key]
 
-        if self._next_pair_id < self._max_pairs:
+        if key in self._color_pair_cache:
+            return self._color_pair_cache[key]
+
+        if self._next_pair_id < getattr(curses, "COLOR_PAIRS", 256):
             pair_id = self._next_pair_id
             curses.init_pair(pair_id, fg_idx, bg_idx)
-            self._color_pairs[key] = pair_id
+            self._color_pair_cache[key] = pair_id
             self._next_pair_id += 1
             return pair_id
 
-        # Fallback if we somehow exhaust terminal color pairs
         return 0
 
-    def enter_alternate_screen(self):
-        self.stdscr = curses.initscr()
-        curses.start_color()
-        curses.use_default_colors()
-        self._max_pairs = min(curses.COLOR_PAIRS - 1, 32767)
+    def _map_curses_attrs(self, style_flags: int) -> int:
+        attrs = 0
+        if style_flags & 1:  attrs |= curses.A_BOLD
+        if style_flags & 2:  attrs |= getattr(curses, "A_DIM", 0)
+        if style_flags & 4:  attrs |= getattr(curses, "A_ITALIC", 0)
+        if style_flags & 8:  attrs |= curses.A_UNDERLINE
+        if style_flags & 16: attrs |= curses.A_BLINK
+        if style_flags & 32: attrs |= curses.A_REVERSE
+        return attrs
+
+    def resize(self, new_width: int, new_height: int) -> None:
+        if new_width == self.width and new_height == self.height:
+            return
+
+        self.width = new_width
+        self.height = new_height
+        self.grid = self._create_grid(self.width, self.height)
+
+        self.front_buffer = [
+            [{"char": None, "fg": None, "bg": None, "style": None} for _ in range(self.width)]
+            for _ in range(self.height)
+        ]
+
+    def auto_resize(self) -> bool:
+        if self.stdscr is None:
+            return False
+        max_y, max_x = self.stdscr.getmaxyx()
+        if max_x != self.width or max_y != self.height:
+            self.resize(max_x, max_y)
+            return True
+        return False
+
+    def enter_alternate_screen(self) -> None:
+        if self.stdscr is None:
+            self.stdscr = curses.initscr()
+
         curses.noecho()
         curses.cbreak()
         curses.curs_set(0)
-        self.stdscr.clear()
+        self.stdscr.keypad(True)
 
-    def exit_alternate_screen(self):
-        if self.stdscr:
-            curses.curs_set(1)
+        if curses.has_colors():
+            curses.start_color()
+            curses.use_default_colors()
+
+        max_y, max_x = self.stdscr.getmaxyx()
+        self.resize(max_x, max_y)
+
+    def exit_alternate_screen(self) -> None:
+        if self.stdscr is not None:
+            self.stdscr.keypad(False)
             curses.nocbreak()
             curses.echo()
+            curses.curs_set(1)
             curses.endwin()
-            self.stdscr = None
 
-    def clear(self):
-        empty = {'char': ' ', 'fg': None, 'bg': None}
+    def clear(self) -> None:
+        empty = {"char": " ", "fg": None, "bg": None, "style": 0}
         for y in range(self.height):
             for x in range(self.width):
                 self.grid[y][x] = empty.copy()
 
-    def put_str(self, x, y, text, fg=None, bg=None, style=0):
+    def put_str(self, x: int, y: int, text: str, fg=UNSET, bg=UNSET, style=UNSET) -> None:
         if y < 0 or y >= self.height:
             return
         for i, char in enumerate(text):
             cx = x + i
             if 0 <= cx < self.width:
-                self.grid[y][cx].update({'char': char, 'fg': fg, 'bg': bg})
+                cell = self.grid[y][cx]
+                if char is not UNSET: cell["char"] = char
+                if fg is not UNSET: cell["fg"] = fg
+                if bg is not UNSET: cell["bg"] = bg
+                if style is not UNSET: cell["style"] = style
 
-    def edit_region_colors(self, x, y, w, h, fg=None, bg=None):
+    def edit_region_colors(self, x: int, y: int, w: int, h: int, fg=UNSET, bg=UNSET, style=UNSET) -> None:
         for cy in range(max(0, y), min(self.height, y + h)):
             for cx in range(max(0, x), min(self.width, x + w)):
-                if fg:
-                    self.grid[cy][cx]['fg'] = fg
-                if bg:
-                    self.grid[cy][cx]['bg'] = bg
+                cell = self.grid[cy][cx]
+                if fg is not UNSET: cell["fg"] = fg
+                if bg is not UNSET: cell["bg"] = bg
+                if style is not UNSET: cell["style"] = style
 
-    def render(self):
-        if not self.stdscr:
+    def render(self) -> None:
+        if self.stdscr is None:
             return
 
         for y in range(self.height):
             for x in range(self.width):
                 cell = self.grid[y][x]
-                front = self.front_buffer[y][x]
-
-                if cell == front:
+                if cell == self.front_buffer[y][x]:
                     continue
 
-                # Commit to front buffer
-                front.update(cell)
+                pair_idx = self._get_color_pair(cell["fg"], cell["bg"])
+                attr = curses.color_pair(pair_idx) | self._map_curses_attrs(cell["style"])
 
-                pair_id = self._get_color_pair(cell['fg'], cell['bg'])
                 try:
-                    self.stdscr.addstr(
-                        y, x, cell['char'], curses.color_pair(pair_id))
+                    self.stdscr.addstr(y, x, cell["char"], attr)
                 except curses.error:
-                    pass  # Writing to bottom-right corner throws in curses
+                    # Prevents crashes when writing to the bottom-right corner cell
+                    pass
+
+                self.front_buffer[y][x] = cell.copy()
 
         self.stdscr.refresh()

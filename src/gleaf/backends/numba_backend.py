@@ -1,230 +1,271 @@
-"""Numba Struct-of-Arrays (SoA) Multi-Core Parallel Canvas."""
+"""Ultra High-Performance Numba JIT Backend."""
 
 import sys
 import numpy as np
-from numba import jit, prange
-from .base import BaseCanvas
+from numba import jit
+from gleaf import NumPyCanvas
 
-try:
-    import termios
-    import tty
-except ImportError:
-    termios = None
+from typing import Optional
 
 
-@jit(nopython=True)
-def _append_int(buffer, offset, val):
-    if val == 0:
-        buffer[offset] = 48
-        return offset + 1
-    temp = np.zeros(10, dtype=np.uint8)
-    count = 0
-    while val > 0:
-        temp[count] = 48 + (val % 10)
-        val //= 10
-        count += 1
-    for i in range(count - 1, -1, -1):
-        buffer[offset] = temp[i]
-        offset += 1
-    return offset
+def warmup_numba_jit(canvas: Optional[NumbaCanvas] = None) -> None:
+    """Pre-compiles Numba JIT kernels to eliminate first-frame compilation stutter.
 
+    Can be called either standalone before entering your event loop,
+    or directly on an existing `NumbaCanvas` instance.
+    """
+    if canvas is not None:
+        # Populate canvas with data that triggers all features (colors, styles, unicode)
+        canvas.put_str(0, 0, "🔥", fg=(255, 128, 0), bg=(30, 30, 30), style=63)
 
-@jit(nopython=True, parallel=True, cache=True)
-def _render_deltas_parallel(
-    height, width, 
-    char_b, fg_r_b, fg_g_b, fg_b_b, bg_r_b, bg_g_b, bg_b_b, has_fg_b, has_bg_b,
-    char_f, fg_r_f, fg_g_f, fg_b_f, bg_r_f, bg_g_f, bg_b_f, has_fg_f, has_bg_f,
-    line_buffers, line_lengths
-):
-    for y in prange(height):
-        buf = line_buffers[y]
-        pos = 0
-        
-        cur_has_fg = False
-        cur_has_bg = False
-        cur_fg_r, cur_fg_g, cur_fg_b = 0, 0, 0
-        cur_bg_r, cur_bg_g, cur_bg_b = 0, 0, 0
-        cx = -1
+        # Execute JIT kernel directly into buffer without flushing to terminal/stdout
+        _numba_render_kernel(
+            canvas.b_char, canvas.b_has_fg, canvas.b_fg_r, canvas.b_fg_g, canvas.b_fg_b,
+            canvas.b_has_bg, canvas.b_bg_r, canvas.b_bg_g, canvas.b_bg_b, canvas.b_style,
+            canvas.f_char, canvas.f_has_fg, canvas.f_fg_r, canvas.f_fg_g, canvas.f_fg_b,
+            canvas.f_has_bg, canvas.f_bg_r, canvas.f_bg_g, canvas.f_bg_b, canvas.f_style,
+            canvas._out_buf
+        )
+        canvas.clear()
+        return
 
-        for x in range(width):
-            if (char_b[y, x] == char_f[y, x] and
-                has_fg_b[y, x] == has_fg_f[y, x] and
-                has_bg_b[y, x] == has_bg_f[y, x] and
-                (not has_fg_b[y, x] or (fg_r_b[y, x] == fg_r_f[y, x] and fg_g_b[y, x] == fg_g_f[y, x] and fg_b_b[y, x] == fg_b_f[y, x])) and
-                (not has_bg_b[y, x] or (bg_r_b[y, x] == bg_r_f[y, x] and bg_g_b[y, x] == bg_g_f[y, x] and bg_b_b[y, x] == bg_b_f[y, x]))
-            ):
-                continue
+    # Standalone warmup using minimal dummy arrays
+    h, w = 2, 2
 
-            char_f[y, x] = char_b[y, x]
-            has_fg_f[y, x] = has_fg_b[y, x]
-            has_bg_f[y, x] = has_bg_b[y, x]
-            fg_r_f[y, x] = fg_r_b[y, x]; fg_g_f[y, x] = fg_g_b[y, x]; fg_b_f[y, x] = fg_b_b[y, x]
-            bg_r_f[y, x] = bg_r_b[y, x]; bg_g_f[y, x] = bg_g_b[y, x]; bg_b_f[y, x] = bg_b_b[y, x]
+    # Multi-byte UTF-8 character (e.g. '🔥' = 0x1F525) to trigger 4-byte UTF-8 encoding
+    b_char = np.full((h, w), 0x1F525, dtype=np.uint32)
 
-            if cx != x:
-                buf[pos] = 27; buf[pos+1] = 91; pos += 2
-                pos = _append_int(buf, pos, y + 1); buf[pos] = 59; pos += 1
-                pos = _append_int(buf, pos, x + 1); buf[pos] = 72; pos += 1
+    # Enable foreground truecolor
+    b_has_fg = np.ones((h, w), dtype=np.uint8)
+    b_fg_r = np.full((h, w), 255, dtype=np.uint8)
+    b_fg_g = np.full((h, w), 128, dtype=np.uint8)
+    b_fg_b = np.full((h, w), 64, dtype=np.uint8)
 
-            if has_fg_b[y, x] and (not cur_has_fg or cur_fg_r != fg_r_b[y, x] or cur_fg_g != fg_g_b[y, x] or cur_fg_b != fg_b_b[y, x]):
-                buf[pos]=27; buf[pos+1]=91; buf[pos+2]=51; buf[pos+3]=56; buf[pos+4]=59; buf[pos+5]=50; buf[pos+6]=59; pos+=7
-                pos = _append_int(buf, pos, fg_r_b[y, x]); buf[pos] = 59; pos += 1
-                pos = _append_int(buf, pos, fg_g_b[y, x]); buf[pos] = 59; pos += 1
-                pos = _append_int(buf, pos, fg_b_b[y, x]); buf[pos] = 109; pos += 1
-                cur_has_fg = True
-                cur_fg_r, cur_fg_g, cur_fg_b = fg_r_b[y, x], fg_g_b[y, x], fg_b_b[y, x]
-            elif not has_fg_b[y, x] and cur_has_fg:
-                buf[pos]=27; buf[pos+1]=91; buf[pos+2]=51; buf[pos+3]=57; buf[pos+4]=109; pos+=5
-                cur_has_fg = False
+    # Enable background truecolor
+    b_has_bg = np.ones((h, w), dtype=np.uint8)
+    b_bg_r = np.full((h, w), 16, dtype=np.uint8)
+    b_bg_g = np.full((h, w), 32, dtype=np.uint8)
+    b_bg_b = np.full((h, w), 48, dtype=np.uint8)
 
-            if has_bg_b[y, x] and (not cur_has_bg or cur_bg_r != bg_r_b[y, x] or cur_bg_g != bg_g_b[y, x] or cur_bg_b != bg_b_b[y, x]):
-                buf[pos]=27; buf[pos+1]=91; buf[pos+2]=52; buf[pos+3]=56; buf[pos+4]=59; buf[pos+5]=50; buf[pos+6]=59; pos+=7
-                pos = _append_int(buf, pos, bg_r_b[y, x]); buf[pos] = 59; pos += 1
-                pos = _append_int(buf, pos, bg_g_b[y, x]); buf[pos] = 59; pos += 1
-                pos = _append_int(buf, pos, bg_b_b[y, x]); buf[pos] = 109; pos += 1
-                cur_has_bg = True
-                cur_bg_r, cur_bg_g, cur_bg_b = bg_r_b[y, x], bg_g_b[y, x], bg_b_b[y, x]
-            elif not has_bg_b[y, x] and cur_has_bg:
-                buf[pos]=27; buf[pos+1]=91; buf[pos+2]=52; buf[pos+3]=57; buf[pos+4]=109; pos+=5
-                cur_has_bg = False
+    # Bitmask 63 = 1|2|4|8|16|32 (Bold, Dim, Italic, Underline, Blink, Reverse)
+    b_style = np.full((h, w), 63, dtype=np.uint8)
 
-            ch = char_b[y, x]
-            if ch <= 0x7F:
-                buf[pos] = ch
-                pos += 1
-            elif ch <= 0x7FF:
-                buf[pos] = 192 | (ch >> 6); buf[pos+1] = 128 | (ch & 63); pos += 2
-            elif ch <= 0xFFFF:
-                buf[pos] = 224 | (ch >> 12); buf[pos+1] = 128 | ((ch >> 6) & 63); buf[pos+2] = 128 | (ch & 63); pos += 3
-            else:
-                buf[pos] = 240 | (ch >> 18); buf[pos+1] = 128 | ((ch >> 12) & 63); buf[pos+2] = 128 | ((ch >> 6) & 63); buf[pos+3] = 128 | (ch & 63); pos += 4
+    # Diff-triggering front buffer (sentinel uninitialized values)
+    f_char = np.zeros((h, w), dtype=np.uint32)
+    f_has_fg = np.zeros((h, w), dtype=np.uint8)
+    f_fg_r = np.zeros((h, w), dtype=np.uint8)
+    f_fg_g = np.zeros((h, w), dtype=np.uint8)
+    f_fg_b = np.zeros((h, w), dtype=np.uint8)
 
-            cx = x + 1
+    f_has_bg = np.zeros((h, w), dtype=np.uint8)
+    f_bg_r = np.zeros((h, w), dtype=np.uint8)
+    f_bg_g = np.zeros((h, w), dtype=np.uint8)
+    f_bg_b = np.zeros((h, w), dtype=np.uint8)
 
-        if cur_has_fg or cur_has_bg:
-            buf[pos] = 27; buf[pos+1] = 91; buf[pos+2] = 48; buf[pos+3] = 109; pos += 4
+    f_style = np.zeros((h, w), dtype=np.uint8)
 
-        line_lengths[y] = pos
+    out_buf = np.zeros(1024, dtype=np.uint8)
 
-
-def warmup_numba_jit():
-    """Silently triggers JIT compilation without writing to stdout."""
-    u8 = np.zeros((1, 1), dtype=np.uint8)
-    u32 = np.zeros((1, 1), dtype=np.uint32)
-    b = np.zeros((1, 1), dtype=np.bool_)
-    i32 = np.zeros(1, dtype=np.int32)
-    _render_deltas_parallel(
-        1, 1,
-        u32, u8, u8, u8, u8, u8, u8, b, b,
-        u32, u8, u8, u8, u8, u8, u8, b, b,
-        u8, i32
+    # Trigger compilation pass
+    _numba_render_kernel(
+        b_char, b_has_fg, b_fg_r, b_fg_g, b_fg_b,
+        b_has_bg, b_bg_r, b_bg_g, b_bg_b, b_style,
+        f_char, f_has_fg, f_fg_r, f_fg_g, f_fg_b,
+        f_has_bg, f_bg_r, f_bg_g, f_bg_b, f_style,
+        out_buf
     )
 
 
-class NumbaCanvas(BaseCanvas):
-    def __init__(self, width=None, height=None):
+@jit(nopython=True, fastmath=True)
+def _append_int(buf, pos, val):
+    if val == 0:
+        buf[pos] = 48  # '0'
+        return pos + 1
+    start = pos
+    while val > 0:
+        buf[pos] = 48 + (val % 10)
+        val //= 10
+        pos += 1
+    end = pos - 1
+    while start < end:
+        tmp = buf[start]
+        buf[start] = buf[end]
+        buf[end] = tmp
+        start += 1
+        end -= 1
+    return pos
+
+
+@jit(nopython=True, fastmath=True)
+def _append_utf8(buf, pos, code):
+    if code <= 0x7F:
+        buf[pos] = code
+        return pos + 1
+    elif code <= 0x7FF:
+        buf[pos] = 0xC0 | (code >> 6)
+        buf[pos + 1] = 0x80 | (code & 0x3F)
+        return pos + 2
+    elif code <= 0xFFFF:
+        buf[pos] = 0xE0 | (code >> 12)
+        buf[pos + 1] = 0x80 | ((code >> 6) & 0x3F)
+        buf[pos + 2] = 0x80 | (code & 0x3F)
+        return pos + 3
+    else:
+        buf[pos] = 0xF0 | (code >> 18)
+        buf[pos + 1] = 0x80 | ((code >> 12) & 0x3F)
+        buf[pos + 2] = 0x80 | ((code >> 6) & 0x3F)
+        buf[pos + 3] = 0x80 | (code & 0x3F)
+        return pos + 4
+
+
+@jit(nopython=True, fastmath=True)
+def _numba_render_kernel(
+    b_char, b_has_fg, b_fg_r, b_fg_g, b_fg_b, b_has_bg, b_bg_r, b_bg_g, b_bg_b, b_style,
+    f_char, f_has_fg, f_fg_r, f_fg_g, f_fg_b, f_has_bg, f_bg_r, f_bg_g, f_bg_b, f_style,
+    out_buf
+):
+    h, w = b_char.shape
+    pos = 0
+
+    last_y, last_x = -1, -1
+
+    for y in range(h):
+        for x in range(w):
+            bc = b_char[y, x]
+            bhfg = b_has_fg[y, x]
+            bhbg = b_has_bg[y, x]
+            bst = b_style[y, x]
+
+            # Delta comparison
+            diff = (
+                bc != f_char[y, x] or
+                bhfg != f_has_fg[y, x] or
+                bhbg != f_has_bg[y, x] or
+                bst != f_style[y, x] or
+                (bhfg == 1 and (b_fg_r[y, x] != f_fg_r[y, x] or b_fg_g[y, x] != f_fg_g[y, x] or b_fg_b[y, x] != f_fg_b[y, x])) or
+                (bhbg == 1 and (b_bg_r[y, x] != f_bg_r[y, x] or b_bg_g[y, x]
+                 != f_bg_g[y, x] or b_bg_b[y, x] != f_bg_b[y, x]))
+            )
+
+            if not diff:
+                continue
+
+            # Move cursor if not adjacent cell in same row
+            if y != last_y or x != last_x + 1:
+                out_buf[pos] = 27
+                out_buf[pos + 1] = 91  # "\033["
+                pos = _append_int(out_buf, pos + 2, y + 1)
+                out_buf[pos] = 59  # ';'
+                pos = _append_int(out_buf, pos + 1, x + 1)
+                out_buf[pos] = 72  # 'H'
+                pos += 1
+
+            # SGR Reset
+            out_buf[pos] = 27
+            out_buf[pos + 1] = 91
+            out_buf[pos + 2] = 48  # "\033[0"
+            pos += 3
+
+            # Bitmask Text Style attributes
+            if bst & 1:   # Bold
+                out_buf[pos] = 59
+                out_buf[pos + 1] = 49
+                pos += 2
+            if bst & 2:   # Dim
+                out_buf[pos] = 59
+                out_buf[pos + 1] = 50
+                pos += 2
+            if bst & 4:   # Italic
+                out_buf[pos] = 59
+                out_buf[pos + 1] = 51
+                pos += 2
+            if bst & 8:   # Underline
+                out_buf[pos] = 59
+                out_buf[pos + 1] = 52
+                pos += 2
+            if bst & 16:  # Blink
+                out_buf[pos] = 59
+                out_buf[pos + 1] = 53
+                pos += 2
+            if bst & 32:  # Reverse
+                out_buf[pos] = 59
+                out_buf[pos + 1] = 55
+                pos += 2
+
+            # Foreground Truecolor
+            if bhfg == 1:
+                out_buf[pos] = 59
+                out_buf[pos + 1] = 51
+                out_buf[pos + 2] = 56
+                out_buf[pos + 3] = 59
+                out_buf[pos + 4] = 50
+                out_buf[pos + 5] = 59  # ";38;2;"
+                pos = _append_int(out_buf, pos + 6, b_fg_r[y, x])
+                out_buf[pos] = 59
+                pos += 1
+                pos = _append_int(out_buf, pos, b_fg_g[y, x])
+                out_buf[pos] = 59
+                pos += 1
+                pos = _append_int(out_buf, pos, b_fg_b[y, x])
+
+            # Background Truecolor
+            if bhbg == 1:
+                out_buf[pos] = 59
+                out_buf[pos + 1] = 52
+                out_buf[pos + 2] = 56
+                out_buf[pos + 3] = 59
+                out_buf[pos + 4] = 50
+                out_buf[pos + 5] = 59  # ";48;2;"
+                pos = _append_int(out_buf, pos + 6, b_bg_r[y, x])
+                out_buf[pos] = 59
+                pos += 1
+                pos = _append_int(out_buf, pos, b_bg_g[y, x])
+                out_buf[pos] = 59
+                pos += 1
+                pos = _append_int(out_buf, pos, b_bg_b[y, x])
+
+            out_buf[pos] = 109  # 'm'
+            pos += 1
+
+            # Append character bytes
+            pos = _append_utf8(out_buf, pos, bc)
+
+            # Update front buffer state
+            f_char[y, x] = bc
+            f_has_fg[y, x] = bhfg
+            f_fg_r[y, x] = b_fg_r[y, x]
+            f_fg_g[y, x] = b_fg_g[y, x]
+            f_fg_b[y, x] = b_fg_b[y, x]
+            f_has_bg[y, x] = bhbg
+            f_bg_r[y, x] = b_bg_r[y, x]
+            f_bg_g[y, x] = b_bg_g[y, x]
+            f_bg_b[y, x] = b_bg_b[y, x]
+            f_style[y, x] = bst
+
+            last_y, last_x = y, x
+
+    return pos
+
+
+class NumbaCanvas(NumPyCanvas):
+    def __init__(self, width: Optional[int] = None, height: Optional[int] = None):
         super().__init__(width, height)
-        self._allocate_soa_buffers()
+        # Pre-allocate byte output buffer (up to ~64 bytes per cell maximum)
+        self._out_buf = np.zeros(self.width * self.height * 64, dtype=np.uint8)
 
-    def _allocate_soa_buffers(self):
-        w, h = self.width, self.height
-        # Back Buffers
-        self.b_char = np.full((h, w), ord(' '), dtype=np.uint32)
-        self.b_has_fg = np.zeros((h, w), dtype=np.bool_)
-        self.b_has_bg = np.zeros((h, w), dtype=np.bool_)
-        self.b_fg_r = np.zeros((h, w), dtype=np.uint8); self.b_fg_g = np.zeros((h, w), dtype=np.uint8); self.b_fg_b = np.zeros((h, w), dtype=np.uint8)
-        self.b_bg_r = np.zeros((h, w), dtype=np.uint8); self.b_bg_g = np.zeros((h, w), dtype=np.uint8); self.b_bg_b = np.zeros((h, w), dtype=np.uint8)
+    def _init_buffers(self, w: int, h: int) -> None:
+        super()._init_buffers(w, h)
+        self._out_buf = np.zeros(w * h * 64, dtype=np.uint8)
 
-        # Front Buffers
-        self.f_char = np.zeros((h, w), dtype=np.uint32)
-        self.f_has_fg = np.zeros((h, w), dtype=np.bool_)
-        self.f_has_bg = np.zeros((h, w), dtype=np.bool_)
-        self.f_fg_r = np.zeros((h, w), dtype=np.uint8); self.f_fg_g = np.zeros((h, w), dtype=np.uint8); self.f_fg_b = np.zeros((h, w), dtype=np.uint8)
-        self.f_bg_r = np.zeros((h, w), dtype=np.uint8); self.f_bg_g = np.zeros((h, w), dtype=np.uint8); self.f_bg_b = np.zeros((h, w), dtype=np.uint8)
-
-        # Output Buffers
-        self._line_buffers = np.zeros((h, w * 32 + 64), dtype=np.uint8)
-        self._line_lengths = np.zeros(h, dtype=np.int32)
-
-    def resize(self, width: int, height: int):
-        self.width, self.height = width, height
-        self._allocate_soa_buffers()
-        self.invalidate_front_buffer()
-
-    def enter_alternate_screen(self):
-        sys.__stdout__.write("\033[?1049h\033[H\033[2J\033[?25l")
-        sys.__stdout__.flush()
-        
-        if termios is not None and sys.stdin.isatty():
-            self._old_term = termios.tcgetattr(sys.stdin)
-            tty.setcbreak(sys.stdin.fileno())
-            
-        self.invalidate_front_buffer()
-
-    def exit_alternate_screen(self):
-        sys.__stdout__.write("\033[0m\033[?1049l\033[?25h")
-        sys.__stdout__.flush()
-        
-        if termios is not None and hasattr(self, '_old_term') and sys.stdin.isatty():
-            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._old_term)
-
-    def invalidate_front_buffer(self):
-        if hasattr(self, 'f_char'):
-            self.f_char.fill(0)
-
-    def clear(self):
-        if hasattr(self, 'b_char'):
-            self.b_char.fill(ord(' '))
-            self.b_has_fg.fill(False)
-            self.b_has_bg.fill(False)
-
-    def put_str(self, x, y, text, fg=None, bg=None, style=0):
-        if y < 0 or y >= self.height:
-            return
-        length = min(len(text), self.width - x)
-        if length <= 0:
-            return
-
-        self.b_char[y, x:x+length] = [ord(c) for c in text[:length]]
-
-        if fg:
-            self.b_has_fg[y, x:x+length] = True
-            self.b_fg_r[y, x:x+length] = fg[0]
-            self.b_fg_g[y, x:x+length] = fg[1]
-            self.b_fg_b[y, x:x+length] = fg[2]
-
-        if bg:
-            self.b_has_bg[y, x:x+length] = True
-            self.b_bg_r[y, x:x+length] = bg[0]
-            self.b_bg_g[y, x:x+length] = bg[1]
-            self.b_bg_b[y, x:x+length] = bg[2]
-
-    def edit_region_colors(self, x, y, w, h, fg=None, bg=None):
-        sy = max(0, y); ey = min(self.height, y + h)
-        sx = max(0, x); ex = min(self.width, x + w)
-        if fg:
-            self.b_has_fg[sy:ey, sx:ex] = True
-            self.b_fg_r[sy:ey, sx:ex] = fg[0]
-            self.b_fg_g[sy:ey, sx:ex] = fg[1]
-            self.b_fg_b[sy:ey, sx:ex] = fg[2]
-        if bg:
-            self.b_has_bg[sy:ey, sx:ex] = True
-            self.b_bg_r[sy:ey, sx:ex] = bg[0]
-            self.b_bg_g[sy:ey, sx:ex] = bg[1]
-            self.b_bg_b[sy:ey, sx:ex] = bg[2]
-
-    def render(self):
-        _render_deltas_parallel(
-            self.height, self.width,
-            self.b_char, self.b_fg_r, self.b_fg_g, self.b_fg_b, self.b_bg_r, self.b_bg_g, self.b_bg_b, self.b_has_fg, self.b_has_bg,
-            self.f_char, self.f_fg_r, self.f_fg_g, self.f_fg_b, self.f_bg_r, self.f_bg_g, self.f_bg_b, self.f_has_fg, self.f_has_bg,
-            self._line_buffers, self._line_lengths
+    def render(self) -> None:
+        bytes_written = _numba_render_kernel(
+            self.b_char, self.b_has_fg, self.b_fg_r, self.b_fg_g, self.b_fg_b,
+            self.b_has_bg, self.b_bg_r, self.b_bg_g, self.b_bg_b, self.b_style,
+            self.f_char, self.f_has_fg, self.f_fg_r, self.f_fg_g, self.f_fg_b,
+            self.f_has_bg, self.f_bg_r, self.f_bg_g, self.f_bg_b, self.f_style,
+            self._out_buf
         )
-        
-        out_chunks = [
-            self._line_buffers[y, :self._line_lengths[y]].tobytes() 
-            for y in range(self.height) if self._line_lengths[y] > 0
-        ]
-        if out_chunks:
-            sys.__stdout__.buffer.write(b"".join(out_chunks))
-            sys.__stdout__.buffer.flush()
+
+        if bytes_written > 0:
+            sys.stdout.buffer.write(self._out_buf[:bytes_written].tobytes())
+            sys.stdout.buffer.flush()
