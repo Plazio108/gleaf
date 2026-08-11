@@ -18,6 +18,7 @@ except ImportError:
 
 try:
     from .backends.numpy_backend import NumPyCanvas
+    from .backends.fast_numpy_backend import FastNumPyCanvas
     HAS_NUMPY = True
 except ImportError:
     pass
@@ -55,6 +56,8 @@ def get_canvas_class(backend: str = "auto"):
         return NumbaCanvas, "Numba"
     if backend == "numpy" and HAS_NUMPY:
         return NumPyCanvas, "NumPy"
+    if backend == "fast_numpy" and HAS_NUMPY:
+        return FastNumPyCanvas, "Fast NumPy"
     if backend == "rich" and HAS_RICH:
         return RichCanvas, "Rich"
     if backend == "curses" and HAS_CURSES:

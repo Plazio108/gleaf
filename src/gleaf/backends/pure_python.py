@@ -1,8 +1,8 @@
 """Pure Python Double-Buffered Delta Renderer."""
 
 import sys
-import os
 from .base import BaseCanvas
+from typing import Optional, Tuple
 
 try:
     import termios
@@ -32,6 +32,27 @@ class PurePythonCanvas(BaseCanvas):
                 for _ in range(w)]
             for _ in range(h)
         ]
+
+    # --- Cell Inspection Implementations ---
+    def get_char(self, x: int, y: int) -> str:
+        if 0 <= x < self.width and 0 <= y < self.height:
+            return self.grid[y][x]["char"]
+        return " "
+
+    def get_fg(self, x: int, y: int) -> Optional[Tuple[int, int, int]]:
+        if 0 <= x < self.width and 0 <= y < self.height:
+            return self.grid[y][x]["fg"]
+        return None
+
+    def get_bg(self, x: int, y: int) -> Optional[Tuple[int, int, int]]:
+        if 0 <= x < self.width and 0 <= y < self.height:
+            return self.grid[y][x]["bg"]
+        return None
+
+    def get_style(self, x: int, y: int) -> int:
+        if 0 <= x < self.width and 0 <= y < self.height:
+            return self.grid[y][x]["style"]
+        return 0
 
     def _invalidate_front_buffer(self):
         for y in range(self.height):

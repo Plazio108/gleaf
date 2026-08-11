@@ -3,7 +3,7 @@
 import sys
 import shutil
 import numpy as np
-from typing import Optional
+from typing import Optional, Tuple
 from .base import BaseCanvas, UNSET
 
 try:
@@ -50,6 +50,69 @@ class NumPyCanvas(BaseCanvas):
         self.f_has_bg = np.full((h, w), 255, dtype=np.uint8)
 
         self.f_style = np.full((h, w), 255, dtype=np.uint8)
+
+    # --- Cell Inspection Implementations ---
+    def get_char(self, x: int, y: int) -> str:
+        if 0 <= x < self.width and 0 <= y < self.height:
+            return chr(self.b_char[y, x])
+        return " "
+
+    def get_fg(self, x: int, y: int) -> Optional[Tuple[int, int, int]]:
+        if 0 <= x < self.width and 0 <= y < self.height and self.b_has_fg[y, x]:
+            return (int(self.b_fg_r[y, x]), int(self.b_fg_g[y, x]), int(self.b_fg_b[y, x]))
+        return None
+
+    def get_bg(self, x: int, y: int) -> Optional[Tuple[int, int, int]]:
+        if 0 <= x < self.width and 0 <= y < self.height and self.b_has_bg[y, x]:
+            return (int(self.b_bg_r[y, x]), int(self.b_bg_g[y, x]), int(self.b_bg_b[y, x]))
+        return None
+
+    def get_style(self, x: int, y: int) -> int:
+        if 0 <= x < self.width and 0 <= y < self.height:
+            return int(self.b_style[y, x])
+        return 0
+
+    # --- Vectorized Region / Zone Inspection Overrides ---
+    def _clamp_region(self, x: int, y: int, w: int, h: int) -> Tuple[slice, slice]:
+        x_start = max(0, x)
+        x_end = min(self.width, x + w)
+        y_start = max(0, y)
+        y_end = min(self.height, y + h)
+        return slice(y_start, y_end), slice(x_start, x_end)
+
+    def get_region_chars(self, x: int, y: int, w: int, h: int) -> np.ndarray:
+        s_y, s_x = self._clamp_region(x, y, w, h)
+        return np.vectorize(chr, otypes=[str])(self.b_char[s_y, s_x])
+
+    def get_region_fg(self, x: int, y: int, w: int, h: int) -> np.ndarray:
+        s_y, s_x = self._clamp_region(x, y, w, h)
+        sub_has = self.b_has_fg[s_y, s_x]
+        sub_r, sub_g, sub_b = self.b_fg_r[s_y, s_x], self.b_fg_g[s_y, s_x], self.b_fg_b[s_y, s_x]
+        
+        res = np.empty(sub_has.shape, dtype=object)
+        mask = (sub_has == 1)
+        res[~mask] = None
+        if np.any(mask):
+            rgb_tuples = list(zip(sub_r[mask], sub_g[mask], sub_b[mask]))
+            res[mask] = [(int(r), int(g), int(b)) for r, g, b in rgb_tuples]
+        return res
+
+    def get_region_bg(self, x: int, y: int, w: int, h: int) -> np.ndarray:
+        s_y, s_x = self._clamp_region(x, y, w, h)
+        sub_has = self.b_has_bg[s_y, s_x]
+        sub_r, sub_g, sub_b = self.b_bg_r[s_y, s_x], self.b_bg_g[s_y, s_x], self.b_bg_b[s_y, s_x]
+        
+        res = np.empty(sub_has.shape, dtype=object)
+        mask = (sub_has == 1)
+        res[~mask] = None
+        if np.any(mask):
+            rgb_tuples = list(zip(sub_r[mask], sub_g[mask], sub_b[mask]))
+            res[mask] = [(int(r), int(g), int(b)) for r, g, b in rgb_tuples]
+        return res
+
+    def get_region_styles(self, x: int, y: int, w: int, h: int) -> np.ndarray:
+        s_y, s_x = self._clamp_region(x, y, w, h)
+        return self.b_style[s_y, s_x].copy()
 
     def resize(self, new_width: int, new_height: int) -> None:
         if new_width == self.width and new_height == self.height:

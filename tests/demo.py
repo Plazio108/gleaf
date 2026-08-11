@@ -27,6 +27,7 @@ except ImportError:
 
 try:
     from gleaf.backends.numpy_backend import NumPyCanvas
+    from gleaf.backends.fast_numpy_backend import FastNumPyCanvas
 except ImportError:
     NumPyCanvas = None
 
@@ -57,6 +58,8 @@ def init_backend(backend_name: str):
         return RichCanvas(), "Rich"
     if backend_name in ("numpy", "np") and NumPyCanvas:
         return NumPyCanvas(), "NumPy"
+    if backend_name in ("fast_numpy", "fnp") and FastNumPyCanvas:
+        return FastNumPyCanvas(), "Fast NumPy"
     if backend_name in ("numba", "nb") and NumbaCanvas:
         print("Warming up Numba JIT compiler...")
         warmup_numba_jit()  # Silent compilation on 1x1 dummy arrays

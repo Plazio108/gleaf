@@ -247,6 +247,22 @@ def _numba_render_kernel(
     return pos
 
 
+# --- JIT Region Extraction Kernels ---
+@jit(nopython=True, fastmath=True)
+def _numba_extract_colors(b_has, b_r, b_g, b_b, y_start, y_end, x_start, x_end, out_has, out_rgb):
+    h = y_end - y_start
+    w = x_end - x_start
+    for y in range(h):
+        for x in range(w):
+            sy, sx = y_start + y, x_start + x
+            has_col = b_has[sy, sx]
+            out_has[y, x] = has_col
+            if has_col:
+                out_rgb[y, x, 0] = b_r[sy, sx]
+                out_rgb[y, x, 1] = b_g[sy, sx]
+                out_rgb[y, x, 2] = b_b[sy, sx]
+
+
 class NumbaCanvas(NumPyCanvas):
     def __init__(self, width: Optional[int] = None, height: Optional[int] = None):
         super().__init__(width, height)
@@ -256,6 +272,39 @@ class NumbaCanvas(NumPyCanvas):
     def _init_buffers(self, w: int, h: int) -> None:
         super()._init_buffers(w, h)
         self._out_buf = np.zeros(w * h * 64, dtype=np.uint8)
+
+    # --- Numba JIT Region Getter Overrides ---
+    def get_region_fg_buffers(self, x: int, y: int, w: int, h: int):
+        """Ultra-fast JIT extraction returning primitive NumPy buffers (has_fg, rgb_array)."""
+        s_y, s_x = self._clamp_region(x, y, w, h)
+        y_start, y_end = s_y.start, s_y.stop
+        x_start, x_end = s_x.start, s_x.stop
+
+        rh, rw = y_end - y_start, x_end - x_start
+        out_has = np.empty((rh, rw), dtype=np.uint8)
+        out_rgb = np.empty((rh, rw, 3), dtype=np.uint8)
+
+        _numba_extract_colors(
+            self.b_has_fg, self.b_fg_r, self.b_fg_g, self.b_fg_b,
+            y_start, y_end, x_start, x_end, out_has, out_rgb
+        )
+        return out_has, out_rgb
+
+    def get_region_bg_buffers(self, x: int, y: int, w: int, h: int):
+        """Ultra-fast JIT extraction returning primitive NumPy buffers (has_bg, rgb_array)."""
+        s_y, s_x = self._clamp_region(x, y, w, h)
+        y_start, y_end = s_y.start, s_y.stop
+        x_start, x_end = s_x.start, s_x.stop
+
+        rh, rw = y_end - y_start, x_end - x_start
+        out_has = np.empty((rh, rw), dtype=np.uint8)
+        out_rgb = np.empty((rh, rw, 3), dtype=np.uint8)
+
+        _numba_extract_colors(
+            self.b_has_bg, self.b_bg_r, self.b_bg_g, self.b_bg_b,
+            y_start, y_end, x_start, x_end, out_has, out_rgb
+        )
+        return out_has, out_rgb
 
     def render(self) -> None:
         bytes_written = _numba_render_kernel(

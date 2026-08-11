@@ -7,6 +7,7 @@ import sys
 
 from gleaf.backends.pure_python import PurePythonCanvas
 from gleaf.backends.numpy_backend import NumPyCanvas
+from gleaf.backends.fast_numpy_backend import FastNumPyCanvas
 from gleaf.backends.numba_backend import NumbaCanvas, warmup_numba_jit
 
 try:
@@ -110,6 +111,7 @@ def main():
     backends = [
         (PurePythonCanvas, "Pure Python"),
         (NumPyCanvas, "NumPy Vectorized"),
+        (FastNumPyCanvas, "Fast NumPy"),
         (NumbaCanvas, "Numba JIT"),
         (RichCanvas, "Rich Optimized"),
         # Curses excluded here as it requires an active live TTY curses window session

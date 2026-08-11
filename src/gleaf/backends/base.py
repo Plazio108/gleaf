@@ -24,6 +24,40 @@ class BaseCanvas:
         self.width = width or w
         self.height = height or h
 
+# --- Abstract Cell Getters ---
+    def get_char(self, x: int, y: int) -> str:
+        raise NotImplementedError
+
+    def get_fg(self, x: int, y: int) -> Optional[Tuple[int, int, int]]:
+        raise NotImplementedError
+
+    def get_bg(self, x: int, y: int) -> Optional[Tuple[int, int, int]]:
+        raise NotImplementedError
+
+    def get_style(self, x: int, y: int) -> int:
+        raise NotImplementedError
+
+    def get_cell(self, x: int, y: int) -> Tuple[str, Optional[Tuple[int, int, int]], Optional[Tuple[int, int, int]], int]:
+        """Returns (char, fg, bg, style) at (x, y)."""
+        return (self.get_char(x, y), self.get_fg(x, y), self.get_bg(x, y), self.get_style(x, y))
+
+    # --- Default Region / Zone Getters (Fallback using Cell Getters) ---
+    def get_region_chars(self, x: int, y: int, w: int, h: int) -> List[List[str]]:
+        return [[self.get_char(cx, cy) for cx in range(x, x + w)] for cy in range(y, y + h)]
+
+    def get_region_fg(self, x: int, y: int, w: int, h: int) -> List[List[Optional[Tuple[int, int, int]]]]:
+        return [[self.get_fg(cx, cy) for cx in range(x, x + w)] for cy in range(y, y + h)]
+
+    def get_region_bg(self, x: int, y: int, w: int, h: int) -> List[List[Optional[Tuple[int, int, int]]]]:
+        return [[self.get_bg(cx, cy) for cx in range(x, x + w)] for cy in range(y, y + h)]
+
+    def get_region_styles(self, x: int, y: int, w: int, h: int) -> List[List[int]]:
+        return [[self.get_style(cx, cy) for cx in range(x, x + w)] for cy in range(y, y + h)]
+
+    def get_region_cells(self, x: int, y: int, w: int, h: int) -> List[List[Tuple[str, Optional[Tuple[int, int, int]], Optional[Tuple[int, int, int]], int]]]:
+        return [[self.get_cell(cx, cy) for cx in range(x, x + w)] for cy in range(y, y + h)]
+
+    # --- Canvas management ---
     def resize(self, width: int, height: int):
         raise NotImplementedError
 
@@ -140,17 +174,17 @@ class BaseCanvas:
         # \033[?25l hides the cursor
         sys.__stdout__.write("\033[?1049h\033[H\033[2J\033[?25l")
         sys.__stdout__.flush()
-        
+
         # Disable terminal keystroke echoing
         if termios is not None:
             self._old_term = termios.tcgetattr(sys.stdin)
             tty.setcbreak(sys.stdin.fileno())
-            
+
     def exit_alternate_screen(self):
         # \033[?25h restores the cursor
         sys.__stdout__.write("\033[0m\033[?1049l\033[?25h")
         sys.__stdout__.flush()
-        
+
         # Restore terminal keystroke echoing
         if termios is not None and hasattr(self, '_old_term'):
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._old_term)

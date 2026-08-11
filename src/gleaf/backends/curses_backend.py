@@ -7,13 +7,13 @@ from .base import BaseCanvas, UNSET
 
 class CursesCanvas(BaseCanvas):
     def __init__(
-        self, 
-        stdscr=None, 
-        width: Optional[int] = None, 
+        self,
+        stdscr=None,
+        width: Optional[int] = None,
         height: Optional[int] = None
     ):
         self.stdscr = stdscr
-        
+
         # Infer dimensions from stdscr if available
         if self.stdscr is not None and (width is None or height is None):
             max_y, max_x = self.stdscr.getmaxyx()
@@ -30,7 +30,8 @@ class CursesCanvas(BaseCanvas):
 
     def _create_grid(self, w: int, h: int):
         return [
-            [{"char": " ", "fg": None, "bg": None, "style": 0} for _ in range(w)] 
+            [{"char": " ", "fg": None, "bg": None, "style": 0}
+                for _ in range(w)]
             for _ in range(h)
         ]
 
@@ -63,13 +64,40 @@ class CursesCanvas(BaseCanvas):
 
     def _map_curses_attrs(self, style_flags: int) -> int:
         attrs = 0
-        if style_flags & 1:  attrs |= curses.A_BOLD
-        if style_flags & 2:  attrs |= getattr(curses, "A_DIM", 0)
-        if style_flags & 4:  attrs |= getattr(curses, "A_ITALIC", 0)
-        if style_flags & 8:  attrs |= curses.A_UNDERLINE
-        if style_flags & 16: attrs |= curses.A_BLINK
-        if style_flags & 32: attrs |= curses.A_REVERSE
+        if style_flags & 1:
+            attrs |= curses.A_BOLD
+        if style_flags & 2:
+            attrs |= getattr(curses, "A_DIM", 0)
+        if style_flags & 4:
+            attrs |= getattr(curses, "A_ITALIC", 0)
+        if style_flags & 8:
+            attrs |= curses.A_UNDERLINE
+        if style_flags & 16:
+            attrs |= curses.A_BLINK
+        if style_flags & 32:
+            attrs |= curses.A_REVERSE
         return attrs
+
+    # --- Cell Inspection Implementations ---
+    def get_char(self, x: int, y: int) -> str:
+        if 0 <= x < self.width and 0 <= y < self.height:
+            return self.grid[y][x]["char"]
+        return " "
+
+    def get_fg(self, x: int, y: int) -> Optional[Tuple[int, int, int]]:
+        if 0 <= x < self.width and 0 <= y < self.height:
+            return self.grid[y][x]["fg"]
+        return None
+
+    def get_bg(self, x: int, y: int) -> Optional[Tuple[int, int, int]]:
+        if 0 <= x < self.width and 0 <= y < self.height:
+            return self.grid[y][x]["bg"]
+        return None
+
+    def get_style(self, x: int, y: int) -> int:
+        if 0 <= x < self.width and 0 <= y < self.height:
+            return self.grid[y][x]["style"]
+        return 0
 
     def resize(self, new_width: int, new_height: int) -> None:
         if new_width == self.width and new_height == self.height:
@@ -80,7 +108,8 @@ class CursesCanvas(BaseCanvas):
         self.grid = self._create_grid(self.width, self.height)
 
         self.front_buffer = [
-            [{"char": None, "fg": None, "bg": None, "style": None} for _ in range(self.width)]
+            [{"char": None, "fg": None, "bg": None, "style": None}
+                for _ in range(self.width)]
             for _ in range(self.height)
         ]
 
@@ -130,18 +159,25 @@ class CursesCanvas(BaseCanvas):
             cx = x + i
             if 0 <= cx < self.width:
                 cell = self.grid[y][cx]
-                if char is not UNSET: cell["char"] = char
-                if fg is not UNSET: cell["fg"] = fg
-                if bg is not UNSET: cell["bg"] = bg
-                if style is not UNSET: cell["style"] = style
+                if char is not UNSET:
+                    cell["char"] = char
+                if fg is not UNSET:
+                    cell["fg"] = fg
+                if bg is not UNSET:
+                    cell["bg"] = bg
+                if style is not UNSET:
+                    cell["style"] = style
 
     def edit_region_colors(self, x: int, y: int, w: int, h: int, fg=UNSET, bg=UNSET, style=UNSET) -> None:
         for cy in range(max(0, y), min(self.height, y + h)):
             for cx in range(max(0, x), min(self.width, x + w)):
                 cell = self.grid[cy][cx]
-                if fg is not UNSET: cell["fg"] = fg
-                if bg is not UNSET: cell["bg"] = bg
-                if style is not UNSET: cell["style"] = style
+                if fg is not UNSET:
+                    cell["fg"] = fg
+                if bg is not UNSET:
+                    cell["bg"] = bg
+                if style is not UNSET:
+                    cell["style"] = style
 
     def render(self) -> None:
         if self.stdscr is None:
@@ -154,7 +190,8 @@ class CursesCanvas(BaseCanvas):
                     continue
 
                 pair_idx = self._get_color_pair(cell["fg"], cell["bg"])
-                attr = curses.color_pair(pair_idx) | self._map_curses_attrs(cell["style"])
+                attr = curses.color_pair(
+                    pair_idx) | self._map_curses_attrs(cell["style"])
 
                 try:
                     self.stdscr.addstr(y, x, cell["char"], attr)

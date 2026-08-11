@@ -9,13 +9,13 @@ from .base import BaseCanvas, UNSET
 
 class RichCanvas(BaseCanvas):
     def __init__(
-        self, 
-        width: Optional[int] = None, 
-        height: Optional[int] = None, 
+        self,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
         console: Optional[Console] = None
     ):
         self.console = console or Console()
-        
+
         # Default to Console dimensions if not explicitly passed
         w = width if width is not None else self.console.width
         h = height if height is not None else self.console.height
@@ -28,7 +28,8 @@ class RichCanvas(BaseCanvas):
 
     def _create_grid(self, w: int, h: int):
         return [
-            [{"char": " ", "fg": None, "bg": None, "style": 0} for _ in range(w)] 
+            [{"char": " ", "fg": None, "bg": None, "style": 0}
+                for _ in range(w)]
             for _ in range(h)
         ]
 
@@ -61,6 +62,27 @@ class RichCanvas(BaseCanvas):
         self._style_cache[key] = style
         return style
 
+    # --- Cell Inspection Implementations ---
+    def get_char(self, x: int, y: int) -> str:
+        if 0 <= x < self.width and 0 <= y < self.height:
+            return self.grid[y][x]["char"]
+        return " "
+
+    def get_fg(self, x: int, y: int) -> Optional[Tuple[int, int, int]]:
+        if 0 <= x < self.width and 0 <= y < self.height:
+            return self.grid[y][x]["fg"]
+        return None
+
+    def get_bg(self, x: int, y: int) -> Optional[Tuple[int, int, int]]:
+        if 0 <= x < self.width and 0 <= y < self.height:
+            return self.grid[y][x]["bg"]
+        return None
+
+    def get_style(self, x: int, y: int) -> int:
+        if 0 <= x < self.width and 0 <= y < self.height:
+            return self.grid[y][x]["style"]
+        return 0
+
     def resize(self, new_width: int, new_height: int) -> None:
         if new_width == self.width and new_height == self.height:
             return
@@ -71,7 +93,8 @@ class RichCanvas(BaseCanvas):
 
         # Invalidate front buffer to force a total redraw on next frame
         self.front_buffer = [
-            [{"char": None, "fg": None, "bg": None, "style": None} for _ in range(self.width)]
+            [{"char": None, "fg": None, "bg": None, "style": None}
+                for _ in range(self.width)]
             for _ in range(self.height)
         ]
 
@@ -105,18 +128,25 @@ class RichCanvas(BaseCanvas):
             cx = x + i
             if 0 <= cx < self.width:
                 cell = self.grid[y][cx]
-                if char is not UNSET: cell["char"] = char
-                if fg is not UNSET: cell["fg"] = fg
-                if bg is not UNSET: cell["bg"] = bg
-                if style is not UNSET: cell["style"] = style
+                if char is not UNSET:
+                    cell["char"] = char
+                if fg is not UNSET:
+                    cell["fg"] = fg
+                if bg is not UNSET:
+                    cell["bg"] = bg
+                if style is not UNSET:
+                    cell["style"] = style
 
     def edit_region_colors(self, x: int, y: int, w: int, h: int, fg=UNSET, bg=UNSET, style=UNSET) -> None:
         for cy in range(max(0, y), min(self.height, y + h)):
             for cx in range(max(0, x), min(self.width, x + w)):
                 cell = self.grid[cy][cx]
-                if fg is not UNSET: cell["fg"] = fg
-                if bg is not UNSET: cell["bg"] = bg
-                if style is not UNSET: cell["style"] = style
+                if fg is not UNSET:
+                    cell["fg"] = fg
+                if bg is not UNSET:
+                    cell["bg"] = bg
+                if style is not UNSET:
+                    cell["style"] = style
 
     def render(self) -> None:
         buf = []
@@ -138,8 +168,8 @@ class RichCanvas(BaseCanvas):
                 char_buffer = []
 
                 while (
-                    x < self.width 
-                    and (row[x]["fg"], row[x]["bg"], row[x]["style"]) == curr_style_data 
+                    x < self.width
+                    and (row[x]["fg"], row[x]["bg"], row[x]["style"]) == curr_style_data
                     and row[x] != front_row[x]
                 ):
                     char_buffer.append(row[x]["char"])
