@@ -147,7 +147,7 @@ class NumbaCanvas(BaseCanvas):
         self._line_lengths = np.zeros(h, dtype=np.int32)
 
     def resize(self, width: int, height: int):
-        super().resize(width, height)
+        self.width, self.height = width, height
         self._allocate_soa_buffers()
         self.invalidate_front_buffer()
 

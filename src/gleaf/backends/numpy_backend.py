@@ -52,7 +52,7 @@ class NumPyCanvas(BaseCanvas):
             self.f_char.fill(0)
 
     def resize(self, width: int, height: int):
-        super().resize(width, height)
+        self.width, self.height = width, height
         self._allocate_soa_buffers()
         sys.__stdout__.write("\033[2J")
         sys.__stdout__.flush()
