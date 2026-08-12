@@ -103,7 +103,8 @@ class PurePythonCanvas(BaseCanvas):
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._old_term)
 
     def clear(self):
-        empty = {'char': ' ', 'fg': None, 'bg': None, 'style': Modifiers.NORMAL, 'ul_fg': None}
+        empty = {'char': ' ', 'fg': None, 'bg': None,
+                 'style': Modifiers.NORMAL, 'ul_fg': None}
         for y in range(self.height):
             for x in range(self.width):
                 self.grid[y][x] = empty.copy()
@@ -193,9 +194,10 @@ class PurePythonCanvas(BaseCanvas):
                 if style != cur_style or fg != cur_fg or bg != cur_bg or ul_fg != cur_ul_fg:
                     # Reset formatting when changing styles to prevent trailing attribute bugs
                     app("\033[0m")
-                    
+
                     # Generate optimal ANSI escape sequence via TerminalCaps
-                    ansi_code = format_ansi(fg=fg, bg=bg, style=style, ul_fg=ul_fg)
+                    ansi_code = format_ansi(
+                        fg=fg, bg=bg, style=style, ul_fg=ul_fg)
                     if ansi_code:
                         app(ansi_code)
 
