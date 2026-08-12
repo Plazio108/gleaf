@@ -209,7 +209,7 @@ def main():
         pass
     finally:
         canvas.exit_alternate_screen()
-        print("\nExited clean.")
+        print("Exited clean.")
 
 
 if __name__ == "__main__":

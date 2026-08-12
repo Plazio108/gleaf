@@ -1,8 +1,9 @@
-"""Pure Python Double-Buffered Delta Renderer."""
+"""Pure Python Double-Buffered Delta Renderer integrated with TerminalCaps."""
 
 import sys
+from typing import Optional, Tuple, Union
 from .base import BaseCanvas
-from typing import Optional, Tuple
+from ..caps import TerminalCaps, Modifiers, RGB
 
 try:
     import termios
@@ -12,23 +13,26 @@ except ImportError:
 
 
 class PurePythonCanvas(BaseCanvas):
-    def __init__(self, width=None, height=None):
+    def __init__(self, width: Optional[int] = None, height: Optional[int] = None, caps: Optional[TerminalCaps] = None):
         super().__init__(width, height)
+
+        self.caps = caps if caps is not None else TerminalCaps()
 
         # Double Buffering
         self.grid = self._create_grid(self.width, self.height)
         self.front_buffer = self._create_grid(self.width, self.height)
 
         # Stateful ANSI Tracking
-        self._current_fg = None
-        self._current_bg = None
-        self._current_style = 0
-        self._cursor_x = -1
-        self._cursor_y = -1
+        self._current_fg: Optional[Union[RGB, int]] = None
+        self._current_bg: Optional[Union[RGB, int]] = None
+        self._current_style: int = -1
+        self._current_ul_fg: Optional[Union[RGB, int]] = None
+        self._cursor_x: int = -1
+        self._cursor_y: int = -1
 
-    def _create_grid(self, w, h):
+    def _create_grid(self, w: int, h: int):
         return [
-            [{'char': ' ', 'fg': None, 'bg': None, 'style': 0}
+            [{'char': ' ', 'fg': None, 'bg': None, 'style': Modifiers.NORMAL, 'ul_fg': None}
                 for _ in range(w)]
             for _ in range(h)
         ]
@@ -39,12 +43,12 @@ class PurePythonCanvas(BaseCanvas):
             return self.grid[y][x]["char"]
         return " "
 
-    def get_fg(self, x: int, y: int) -> Optional[Tuple[int, int, int]]:
+    def get_fg(self, x: int, y: int) -> Optional[Union[RGB, int]]:
         if 0 <= x < self.width and 0 <= y < self.height:
             return self.grid[y][x]["fg"]
         return None
 
-    def get_bg(self, x: int, y: int) -> Optional[Tuple[int, int, int]]:
+    def get_bg(self, x: int, y: int) -> Optional[Union[RGB, int]]:
         if 0 <= x < self.width and 0 <= y < self.height:
             return self.grid[y][x]["bg"]
         return None
@@ -52,7 +56,12 @@ class PurePythonCanvas(BaseCanvas):
     def get_style(self, x: int, y: int) -> int:
         if 0 <= x < self.width and 0 <= y < self.height:
             return self.grid[y][x]["style"]
-        return 0
+        return Modifiers.NORMAL
+
+    def get_ul_fg(self, x: int, y: int) -> Optional[Union[RGB, int]]:
+        if 0 <= x < self.width and 0 <= y < self.height:
+            return self.grid[y][x].get("ul_fg")
+        return None
 
     def _invalidate_front_buffer(self):
         for y in range(self.height):
@@ -61,6 +70,7 @@ class PurePythonCanvas(BaseCanvas):
         self._current_fg = None
         self._current_bg = None
         self._current_style = -1
+        self._current_ul_fg = None
         self._cursor_x = -1
         self._cursor_y = -1
 
@@ -93,12 +103,12 @@ class PurePythonCanvas(BaseCanvas):
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._old_term)
 
     def clear(self):
-        empty = {'char': ' ', 'fg': None, 'bg': None, 'style': 0}
+        empty = {'char': ' ', 'fg': None, 'bg': None, 'style': Modifiers.NORMAL, 'ul_fg': None}
         for y in range(self.height):
             for x in range(self.width):
                 self.grid[y][x] = empty.copy()
 
-    def put_str(self, x, y, text, fg=None, bg=None, style=0):
+    def put_str(self, x: int, y: int, text: str, fg=None, bg=None, style=Modifiers.NORMAL, ul_fg=None):
         if y < 0 or y >= self.height:
             return
 
@@ -113,8 +123,10 @@ class PurePythonCanvas(BaseCanvas):
                     cell['bg'] = bg
                 if style is not None:
                     cell['style'] = style
+                if ul_fg is not None:
+                    cell['ul_fg'] = ul_fg
 
-    def edit_region_colors(self, x, y, w, h, fg=None, bg=None):
+    def edit_region_colors(self, x: int, y: int, w: int, h: int, fg=None, bg=None, ul_fg=None):
         for cy in range(max(0, y), min(self.height, y + h)):
             for cx in range(max(0, x), min(self.width, x + w)):
                 cell = self.grid[cy][cx]
@@ -122,6 +134,22 @@ class PurePythonCanvas(BaseCanvas):
                     cell['fg'] = fg
                 if bg is not None:
                     cell['bg'] = bg
+                if ul_fg is not None:
+                    cell['ul_fg'] = ul_fg
+
+    def edit_region_style(self, x: int, y: int, w: int, h: int, style: int, mode: str = "add"):
+        """Modifies style flags for a region using add, remove, or toggle modes."""
+        for cy in range(max(0, y), min(self.height, y + h)):
+            for cx in range(max(0, x), min(self.width, x + w)):
+                cell = self.grid[cy][cx]
+                if mode == "add":
+                    cell['style'] |= style
+                elif mode == "remove":
+                    cell['style'] &= ~style
+                elif mode == "toggle":
+                    cell['style'] ^= style
+                elif mode == "set":
+                    cell['style'] = style
 
     def render(self):
         out = []
@@ -133,8 +161,11 @@ class PurePythonCanvas(BaseCanvas):
         cur_fg = self._current_fg
         cur_bg = self._current_bg
         cur_style = self._current_style
+        cur_ul_fg = self._current_ul_fg
         cx = self._cursor_x
         cy = self._cursor_y
+
+        format_ansi = self.caps.format_style_ansi
 
         for y in range(self.height):
             row_back = grid[y]
@@ -149,44 +180,29 @@ class PurePythonCanvas(BaseCanvas):
 
                 row_front[x] = cell_back.copy()
 
+                # Optimize cursor movement
                 if cx != x or cy != y:
                     app(f"\033[{y+1};{x+1}H")
 
-                style = cell_back['style']
                 fg = cell_back['fg']
                 bg = cell_back['bg']
+                style = cell_back['style']
+                ul_fg = cell_back.get('ul_fg')
 
-                style_changed = False
-                if style != cur_style:
+                # Check if attributes changed
+                if style != cur_style or fg != cur_fg or bg != cur_bg or ul_fg != cur_ul_fg:
+                    # Reset formatting when changing styles to prevent trailing attribute bugs
                     app("\033[0m")
-                    cur_style = style
-                    cur_fg = None
-                    cur_bg = None
-                    style_changed = True
+                    
+                    # Generate optimal ANSI escape sequence via TerminalCaps
+                    ansi_code = format_ansi(fg=fg, bg=bg, style=style, ul_fg=ul_fg)
+                    if ansi_code:
+                        app(ansi_code)
 
-                    if style > 0:
-                        if style & 1:
-                            app("\033[1m")
-                        if style & 2:
-                            app("\033[2m")
-                        if style & 4:
-                            app("\033[3m")
-                        if style & 8:
-                            app("\033[4m")
-
-                if fg != cur_fg or style_changed:
-                    if fg is None:
-                        app("\033[39m")
-                    else:
-                        app(f"\033[38;2;{fg[0]};{fg[1]};{fg[2]}m")
                     cur_fg = fg
-
-                if bg != cur_bg or style_changed:
-                    if bg is None:
-                        app("\033[49m")
-                    else:
-                        app(f"\033[48;2;{bg[0]};{bg[1]};{bg[2]}m")
                     cur_bg = bg
+                    cur_style = style
+                    cur_ul_fg = ul_fg
 
                 app(cell_back['char'])
                 cx = x + 1
@@ -195,6 +211,7 @@ class PurePythonCanvas(BaseCanvas):
         self._current_fg = cur_fg
         self._current_bg = cur_bg
         self._current_style = cur_style
+        self._current_ul_fg = cur_ul_fg
         self._cursor_x = cx
         self._cursor_y = cy
 

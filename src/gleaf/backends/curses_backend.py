@@ -2,6 +2,12 @@
 
 import curses
 from typing import Optional, Tuple
+
+try:
+    from ..caps import Modifiers, TerminalCaps
+except ImportError:
+    from gleaf.caps import Modifiers, TerminalCaps
+
 from .base import BaseCanvas, UNSET
 
 
@@ -22,6 +28,12 @@ class CursesCanvas(BaseCanvas):
 
         super().__init__(width or 80, height or 24)
 
+        self.caps = TerminalCaps(
+            has_truecolor=False,
+            has_256color=False,
+            has_extended_underline=False
+        )
+
         self._color_pair_cache = {}
         self._next_pair_id = 1
 
@@ -30,7 +42,7 @@ class CursesCanvas(BaseCanvas):
 
     def _create_grid(self, w: int, h: int):
         return [
-            [{"char": " ", "fg": None, "bg": None, "style": 0}
+            [{"char": " ", "fg": None, "bg": None, "style": 0, "ul_fg": None}
                 for _ in range(w)]
             for _ in range(h)
         ]
@@ -63,19 +75,44 @@ class CursesCanvas(BaseCanvas):
         return 0
 
     def _map_curses_attrs(self, style_flags: int) -> int:
+        """Map Modifiers bitmask flags to curses attributes with graceful fallbacks."""
+        if not style_flags:
+            return 0
+
         attrs = 0
-        if style_flags & 1:
+
+        # Standard Curses attributes
+        if style_flags & Modifiers.BOLD:
             attrs |= curses.A_BOLD
-        if style_flags & 2:
+        if style_flags & Modifiers.DIM:
             attrs |= getattr(curses, "A_DIM", 0)
-        if style_flags & 4:
+        if style_flags & Modifiers.ITALIC:
             attrs |= getattr(curses, "A_ITALIC", 0)
-        if style_flags & 8:
+        if style_flags & Modifiers.UNDERLINE:
             attrs |= curses.A_UNDERLINE
-        if style_flags & 16:
-            attrs |= curses.A_BLINK
-        if style_flags & 32:
+        if style_flags & Modifiers.REVERSE:
             attrs |= curses.A_REVERSE
+        if style_flags & Modifiers.STANDOUT:
+            attrs |= getattr(curses, "A_STANDOUT", curses.A_REVERSE)
+        if style_flags & Modifiers.BLINK:
+            attrs |= curses.A_BLINK
+        if style_flags & Modifiers.HIDDEN:
+            attrs |= getattr(curses, "A_INVIS", 0)
+
+        # Extended Underlines -> Fallback to standard Curses Underline
+        ext_underline_mask = (
+            Modifiers.DOUBLE_UNDERLINE
+            | Modifiers.CURLY_UNDERLINE
+            | Modifiers.DOTTED_UNDERLINE
+            | Modifiers.DASHED_UNDERLINE
+        )
+        if style_flags & ext_underline_mask:
+            attrs |= curses.A_UNDERLINE
+
+        # Strikethrough fallback (available in modern ncurses builds)
+        if style_flags & Modifiers.STRIKETHROUGH:
+            attrs |= getattr(curses, "A_STRIKETHROUGH", 0)
+
         return attrs
 
     # --- Cell Inspection Implementations ---
@@ -108,7 +145,7 @@ class CursesCanvas(BaseCanvas):
         self.grid = self._create_grid(self.width, self.height)
 
         self.front_buffer = [
-            [{"char": None, "fg": None, "bg": None, "style": None}
+            [{"char": None, "fg": None, "bg": None, "style": None, "ul_fg": None}
                 for _ in range(self.width)]
             for _ in range(self.height)
         ]
@@ -131,9 +168,16 @@ class CursesCanvas(BaseCanvas):
         curses.curs_set(0)
         self.stdscr.keypad(True)
 
-        if curses.has_colors():
+        has_colors = curses.has_colors()
+        if has_colors:
             curses.start_color()
             curses.use_default_colors()
+
+        self.caps = TerminalCaps(
+            has_truecolor=False,
+            has_256color=has_colors,
+            has_extended_underline=False
+        )
 
         max_y, max_x = self.stdscr.getmaxyx()
         self.resize(max_x, max_y)
@@ -147,12 +191,12 @@ class CursesCanvas(BaseCanvas):
             curses.endwin()
 
     def clear(self) -> None:
-        empty = {"char": " ", "fg": None, "bg": None, "style": 0}
+        empty = {"char": " ", "fg": None, "bg": None, "style": 0, "ul_fg": None}
         for y in range(self.height):
             for x in range(self.width):
                 self.grid[y][x] = empty.copy()
 
-    def put_str(self, x: int, y: int, text: str, fg=UNSET, bg=UNSET, style=UNSET) -> None:
+    def put_str(self, x: int, y: int, text: str, fg=UNSET, bg=UNSET, style=UNSET, ul_fg=UNSET) -> None:
         if y < 0 or y >= self.height:
             return
         for i, char in enumerate(text):
@@ -167,8 +211,10 @@ class CursesCanvas(BaseCanvas):
                     cell["bg"] = bg
                 if style is not UNSET:
                     cell["style"] = style
+                if ul_fg is not UNSET:
+                    cell["ul_fg"] = ul_fg
 
-    def edit_region_colors(self, x: int, y: int, w: int, h: int, fg=UNSET, bg=UNSET, style=UNSET) -> None:
+    def edit_region_colors(self, x: int, y: int, w: int, h: int, fg=UNSET, bg=UNSET, style=UNSET, ul_fg=UNSET) -> None:
         for cy in range(max(0, y), min(self.height, y + h)):
             for cx in range(max(0, x), min(self.width, x + w)):
                 cell = self.grid[cy][cx]
@@ -178,6 +224,8 @@ class CursesCanvas(BaseCanvas):
                     cell["bg"] = bg
                 if style is not UNSET:
                     cell["style"] = style
+                if ul_fg is not UNSET:
+                    cell["ul_fg"] = ul_fg
 
     def render(self) -> None:
         if self.stdscr is None:
@@ -190,8 +238,7 @@ class CursesCanvas(BaseCanvas):
                     continue
 
                 pair_idx = self._get_color_pair(cell["fg"], cell["bg"])
-                attr = curses.color_pair(
-                    pair_idx) | self._map_curses_attrs(cell["style"])
+                attr = curses.color_pair(pair_idx) | self._map_curses_attrs(cell["style"])
 
                 try:
                     self.stdscr.addstr(y, x, cell["char"], attr)
