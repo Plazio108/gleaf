@@ -3,11 +3,9 @@
 import sys
 import shutil
 import textwrap
-from typing import Optional, List
+from typing import Optional, List, Tuple
 from ..caps import TerminalCaps
-from ..styles import Style
 
-import sys
 try:
     import termios
     import tty
