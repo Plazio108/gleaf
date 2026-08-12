@@ -105,15 +105,23 @@ class RichCanvas(BaseCanvas):
             return True
         return False
 
-    def enter_alternate_screen(self) -> None:
-        self.console.show_cursor(False)
-        self.console.file.write("\033[?1049h\033[H\033[2J")
-        self.console.file.flush()
+    def enter_alternate_screen(self):
+        """Restores termios TUI mode and uses Rich Console for screen toggles."""
+        # 1. BaseCanvas saves shell_mode and enables cbreak mode
+        super().enter_alternate_screen()
 
-    def exit_alternate_screen(self) -> None:
-        self.console.file.write("\033[0m\033[?1049l")
+        # 2. Rich Console controls alternate screen buffer & cursor
+        self.console.set_alt_screen(True)
+        self.console.show_cursor(False)
+
+    def exit_alternate_screen(self):
+        """Exits alternate screen via Rich Console and restores shell termios state."""
+        # 1. Rich Console restores normal screen buffer & cursor
+        self.console.set_alt_screen(False)
         self.console.show_cursor(True)
-        self.console.file.flush()
+
+        # 2. BaseCanvas restores exact outer shell termios attributes
+        super().exit_alternate_screen()
 
     def clear(self) -> None:
         empty = {"char": " ", "fg": None, "bg": None, "style": 0}
