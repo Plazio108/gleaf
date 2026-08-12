@@ -152,21 +152,6 @@ class NumPyCanvas(BaseCanvas):
             return True
         return False
 
-    def enter_alternate_screen(self) -> None:
-        sys.stdout.write("\033[?1049h\033[H\033[2J\033[?25l")
-        sys.stdout.flush()
-
-        if termios is not None and sys.stdin.isatty():
-            self._old_term = termios.tcgetattr(sys.stdin)
-            tty.setcbreak(sys.stdin.fileno())
-
-    def exit_alternate_screen(self) -> None:
-        sys.stdout.write("\033[0m\033[?1049l\033[?25h")
-        sys.stdout.flush()
-
-        if termios is not None and hasattr(self, "_old_term") and sys.stdin.isatty():
-            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._old_term)
-
     def clear(self) -> None:
         self.b_char.fill(32)
         self.b_has_fg.fill(0)

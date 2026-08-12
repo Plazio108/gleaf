@@ -83,24 +83,12 @@ class PurePythonCanvas(BaseCanvas):
         self._invalidate_front_buffer()
 
     def enter_alternate_screen(self):
-        # \033[?1049h = alt screen, \033[H = home cursor, \033[2J = clear, \033[?25l = hide cursor
-        sys.__stdout__.write("\033[?1049h\033[H\033[2J\033[?25l")
-        sys.__stdout__.flush()
-
-        # Disable echo and set cbreak mode
-        if termios is not None and sys.stdin.isatty():
-            self._old_term = termios.tcgetattr(sys.stdin)
-            tty.setcbreak(sys.stdin.fileno())
+        super().enter_alternate_screen()
 
         self._invalidate_front_buffer()
 
     def exit_alternate_screen(self):
-        # \033[0m = reset styles, \033[?1049l = exit alt screen, \033[?25h = show cursor
-        sys.__stdout__.write("\033[0m\033[?1049l\033[?25h")
-        sys.__stdout__.flush()
-
-        if termios is not None and hasattr(self, '_old_term') and sys.stdin.isatty():
-            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._old_term)
+        super().exit_alternate_screen()
 
     def clear(self):
         empty = {'char': ' ', 'fg': None, 'bg': None,

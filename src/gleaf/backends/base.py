@@ -22,7 +22,12 @@ class BaseCanvas:
         self.width = width or w
         self.height = height or h
 
-# --- Abstract Cell Getters ---
+        # Save the external shell state as early as possible
+        self._shell_mode = None
+        self._prog_mode = None
+        self._save_shell_mode()
+
+    # --- Abstract Cell Getters ---
     def get_char(self, x: int, y: int) -> str:
         raise NotImplementedError
 
@@ -168,21 +173,59 @@ class BaseCanvas:
     def render(self):
         raise NotImplementedError
 
+    # def enter_alternate_screen(self):
+    #     # \033[?25l hides the cursor
+    #     sys.__stdout__.write("\033[?1049h\033[H\033[2J\033[?25l")
+    #     sys.__stdout__.flush()
+
+    #     # Disable terminal keystroke echoing
+    #     if termios is not None:
+    #         self._old_term = termios.tcgetattr(sys.stdin)
+    #         tty.setcbreak(sys.stdin.fileno())
+
+    # def exit_alternate_screen(self):
+    #     # \033[?25h restores the cursor
+    #     sys.__stdout__.write("\033[0m\033[?1049l\033[?25h")
+    #     sys.__stdout__.flush()
+
+    #     # Restore terminal keystroke echoing
+    #     if termios is not None and hasattr(self, '_old_term'):
+    #         termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._old_term)
+
+    def _save_shell_mode(self):
+        """Captures outer terminal state before gleaf modifies anything."""
+        if termios is not None and self._shell_mode is None:
+            try:
+                self._shell_mode = termios.tcgetattr(sys.stdin.fileno())
+            except (termios.error, ValueError, AttributeError):
+                pass
+
     def enter_alternate_screen(self):
-        # \033[?25l hides the cursor
-        sys.__stdout__.write("\033[?1049h\033[H\033[2J\033[?25l")
+        # Guarantee shell mode was saved before entering prog mode
+        self._save_shell_mode()
+
+        sys.__stdout__.write("\033[0m\033[?1049h\033[H\033[2J\033[?25l")
         sys.__stdout__.flush()
 
-        # Disable terminal keystroke echoing
         if termios is not None:
-            self._old_term = termios.tcgetattr(sys.stdin)
             tty.setcbreak(sys.stdin.fileno())
+            # Capture the program/TUI mode state
+            try:
+                self._prog_mode = termios.tcgetattr(sys.stdin.fileno())
+            except (termios.error, ValueError, AttributeError):
+                pass
 
     def exit_alternate_screen(self):
-        # \033[?25h restores the cursor
         sys.__stdout__.write("\033[0m\033[?1049l\033[?25h")
         sys.__stdout__.flush()
 
-        # Restore terminal keystroke echoing
-        if termios is not None and hasattr(self, '_old_term'):
-            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._old_term)
+        # Restore exact outer shell attributes recorded at startup
+        if termios is not None and self._shell_mode is not None:
+            try:
+                termios.tcsetattr(
+                    sys.stdin.fileno(),
+                    termios.TCSAFLUSH,
+                    self._shell_mode
+                )
+            except (termios.error, ValueError, AttributeError):
+                pass

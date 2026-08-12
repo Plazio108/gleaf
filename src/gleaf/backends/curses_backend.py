@@ -40,6 +40,17 @@ class CursesCanvas(BaseCanvas):
         self.grid = self._create_grid(self.width, self.height)
         self.front_buffer = self._create_grid(self.width, self.height)
 
+        # 1. Capture the initial shell mode BEFORE altering terminal flags
+        curses.def_shell_mode()
+
+        # 2. Configure curses TUI modes
+        curses.cbreak()
+        curses.noecho()
+        self.stdscr.keypad(True)
+
+        # 3. Save the program (TUI) mode state
+        curses.def_prog_mode()
+
     def _create_grid(self, w: int, h: int):
         return [
             [{"char": " ", "fg": None, "bg": None, "style": 0, "ul_fg": None}
@@ -159,37 +170,31 @@ class CursesCanvas(BaseCanvas):
             return True
         return False
 
-    def enter_alternate_screen(self) -> None:
-        if self.stdscr is None:
-            self.stdscr = curses.initscr()
+    def enter_alternate_screen(self):
+        """Restores curses program state when entering/resuming the TUI."""
+        if self.stdscr:
+            # If curses was suspended via endwin(), refresh brings the canvas back
+            if curses.isendwin():
+                self.stdscr.refresh()
 
-        curses.noecho()
-        curses.cbreak()
-        curses.curs_set(0)
-        self.stdscr.keypad(True)
+            # Apply saved program (TUI) terminal mode flags
+            curses.reset_prog_mode()
+            curses.curs_set(0)  # Hide cursor
+        else:
+            super().enter_alternate_screen()
 
-        has_colors = curses.has_colors()
-        if has_colors:
-            curses.start_color()
-            curses.use_default_colors()
+    def exit_alternate_screen(self):
+        """Suspends curses and restores outer shell terminal state during handoff/exit."""
+        if self.stdscr:
+            # 1. Update program mode snapshot in case TUI settings shifted
+            curses.def_prog_mode()
 
-        self.caps = TerminalCaps(
-            has_truecolor=False,
-            has_256color=has_colors,
-            has_extended_underline=False
-        )
-
-        max_y, max_x = self.stdscr.getmaxyx()
-        self.resize(max_x, max_y)
-
-    def exit_alternate_screen(self) -> None:
-        if self.stdscr is not None:
-            self.stdscr.keypad(False)
-            curses.nocbreak()
-            curses.echo()
-            curses.curs_set(1)
-            curses.endwin()
-
+            # 2. Restore cursor visibility
+            try:
+                curses.curs_set(1)
+            except curses.error:
+                pass
+    
     def clear(self) -> None:
         empty = {"char": " ", "fg": None, "bg": None, "style": 0, "ul_fg": None}
         for y in range(self.height):
