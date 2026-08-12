@@ -4,7 +4,7 @@ Supports numba, numpy, curses, rich, and pure python fallbacks.
 """
 
 from .backends.pure_python import PurePythonCanvas
-from .styles import Style
+from .styles import Style, Modifiers
 from .caps import TerminalCaps
 from .utils import managed_canvas, enable_suspend, handoff
 
@@ -75,6 +75,6 @@ def TerminalCanvas(width: int = None, height: int = None, backend: str = "auto")
 
 
 __all__ = [
-    "TerminalCanvas", "get_canvas_class", "Style", "TerminalCaps",
+    "TerminalCanvas", "get_canvas_class", "Style", "Modifiers", "TerminalCaps",
     "managed_canvas", "enable_suspend", "handoff"
 ]
