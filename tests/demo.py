@@ -27,27 +27,14 @@ except ImportError:
 
 try:
     from gleaf.backends.numpy_backend import NumPyCanvas
-    from gleaf.backends.fast_numpy_backend import FastNumPyCanvas
 except ImportError:
     NumPyCanvas = None
-
-try:
-    from gleaf.backends.numba_backend import NumbaCanvas
-except ImportError:
-    NumbaCanvas = None
 
 
 def hsv_to_rgb(h: float, s: float, v: float) -> tuple[int, int, int]:
     """Helper to get 0-255 RGB tuples from HSV color space."""
     r, g, b = colorsys.hsv_to_rgb(h % 1.0, s, v)
     return int(r * 255), int(g * 255), int(b * 255)
-
-
-try:
-    from gleaf.backends.numba_backend import NumbaCanvas, warmup_numba_jit
-except ImportError:
-    NumbaCanvas = None
-    warmup_numba_jit = None
 
 
 def init_backend(backend_name: str):
@@ -58,12 +45,12 @@ def init_backend(backend_name: str):
         return RichCanvas(), "Rich"
     if backend_name in ("numpy", "np") and NumPyCanvas:
         return NumPyCanvas(), "NumPy"
-    if backend_name in ("fast_numpy", "fnp") and FastNumPyCanvas:
-        return FastNumPyCanvas(), "Fast NumPy"
-    if backend_name in ("numba", "nb") and NumbaCanvas:
-        print("Warming up Numba JIT compiler...")
-        warmup_numba_jit()  # Silent compilation on 1x1 dummy arrays
-        return NumbaCanvas(), "Numba JIT"
+    # if backend_name in ("fast_numpy", "fnp") and FastNumPyCanvas:
+    #     return FastNumPyCanvas(), "Fast NumPy"
+    # if backend_name in ("numba", "nb") and NumbaCanvas:
+    #     print("Warming up Numba JIT compiler...")
+    #     warmup_numba_jit()  # Silent compilation on 1x1 dummy arrays
+    #     return NumbaCanvas(), "Numba JIT"
 
     return PurePythonCanvas(), "Pure Python"
 

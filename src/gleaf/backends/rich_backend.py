@@ -4,6 +4,12 @@ import sys
 from typing import Optional, Tuple
 from rich.console import Console
 from rich.style import Style
+
+try:
+    from ..caps import Modifiers, TerminalCaps
+except ImportError:
+    from gleaf.caps import Modifiers, TerminalCaps
+
 from .base import BaseCanvas, UNSET
 
 
@@ -21,6 +27,7 @@ class RichCanvas(BaseCanvas):
         h = height if height is not None else self.console.height
 
         super().__init__(w, h)
+        self.caps = TerminalCaps()
         self._style_cache = {}
 
         self.grid = self._create_grid(self.width, self.height)
@@ -28,36 +35,81 @@ class RichCanvas(BaseCanvas):
 
     def _create_grid(self, w: int, h: int):
         return [
-            [{"char": " ", "fg": None, "bg": None, "style": 0}
+            [{"char": " ", "fg": None, "bg": None, "style": 0, "ul_fg": None}
                 for _ in range(w)]
             for _ in range(h)
         ]
 
-    def _get_style(self, fg: Optional[Tuple[int, int, int]], bg: Optional[Tuple[int, int, int]], style_flags: int) -> Optional[Style]:
-        key = (fg, bg, style_flags)
+    def _get_style(
+        self,
+        fg: Optional[Tuple[int, int, int]],
+        bg: Optional[Tuple[int, int, int]],
+        style_flags: int,
+        ul_fg: Optional[Tuple[int, int, int]] = None
+    ) -> Optional[Style]:
+        key = (fg, bg, style_flags, ul_fg)
         if key in self._style_cache:
             return self._style_cache[key]
 
         color = f"rgb({fg[0]},{fg[1]},{fg[2]})" if fg else None
         bgcolor = f"rgb({bg[0]},{bg[1]},{bg[2]})" if bg else None
 
-        bold = bool(style_flags & 1)
-        dim = bool(style_flags & 2)
-        italic = bool(style_flags & 4)
-        underline = bool(style_flags & 8)
-        blink = bool(style_flags & 16)
-        reverse = bool(style_flags & 32)
+        # Map Modifiers bitmask
+        bold = bool(style_flags & Modifiers.BOLD)
+        dim = bool(style_flags & Modifiers.DIM)
+        italic = bool(style_flags & Modifiers.ITALIC)
 
-        style = Style(
-            color=color,
-            bgcolor=bgcolor,
-            bold=bold if bold else None,
-            dim=dim if dim else None,
-            italic=italic if italic else None,
-            underline=underline if underline else None,
-            blink=blink if blink else None,
-            reverse=reverse if reverse else None,
-        ) if (color or bgcolor or style_flags) else None
+        ext_ul = bool(
+            style_flags & (
+                Modifiers.CURLY_UNDERLINE
+                | Modifiers.DOTTED_UNDERLINE
+                | Modifiers.DASHED_UNDERLINE
+            )
+        )
+        underline = bool(style_flags & Modifiers.UNDERLINE) or ext_ul
+        underline2 = bool(style_flags & Modifiers.DOUBLE_UNDERLINE)
+
+        blink = bool(style_flags & Modifiers.BLINK)
+        reverse = bool(style_flags & (Modifiers.REVERSE | Modifiers.STANDOUT))
+        strike = bool(style_flags & Modifiers.STRIKETHROUGH)
+        overline = bool(style_flags & Modifiers.OVERLINE)
+        conceal = bool(style_flags & Modifiers.HIDDEN)
+
+        kwargs = {}
+        if color:
+            kwargs["color"] = color
+        if bgcolor:
+            kwargs["bgcolor"] = bgcolor
+        if bold:
+            kwargs["bold"] = True
+        if dim:
+            kwargs["dim"] = True
+        if italic:
+            kwargs["italic"] = True
+        if underline:
+            kwargs["underline"] = True
+        if underline2:
+            kwargs["underline2"] = True
+        if blink:
+            kwargs["blink"] = True
+        if reverse:
+            kwargs["reverse"] = True
+        if strike:
+            kwargs["strike"] = True
+        if overline:
+            kwargs["overline"] = True
+        if conceal:
+            kwargs["conceal"] = True
+
+        try:
+            style = Style(**kwargs) if kwargs else None
+        except Exception:
+            # Fallback for versions of Rich that may not accept overline or underline2
+            kwargs.pop("overline", None)
+            kwargs.pop("underline2", None)
+            if underline2:
+                kwargs["underline"] = True
+            style = Style(**kwargs) if kwargs else None
 
         self._style_cache[key] = style
         return style
@@ -93,7 +145,7 @@ class RichCanvas(BaseCanvas):
 
         # Invalidate front buffer to force a total redraw on next frame
         self.front_buffer = [
-            [{"char": None, "fg": None, "bg": None, "style": None}
+            [{"char": None, "fg": None, "bg": None, "style": None, "ul_fg": None}
                 for _ in range(self.width)]
             for _ in range(self.height)
         ]
@@ -105,31 +157,23 @@ class RichCanvas(BaseCanvas):
             return True
         return False
 
-    def enter_alternate_screen(self):
-        """Restores termios TUI mode and uses Rich Console for screen toggles."""
-        # 1. BaseCanvas saves shell_mode and enables cbreak mode
+    def enter_alternate_screen(self) -> None:
         super().enter_alternate_screen()
-
-        # 2. Rich Console controls alternate screen buffer & cursor
         self.console.set_alt_screen(True)
         self.console.show_cursor(False)
 
-    def exit_alternate_screen(self):
-        """Exits alternate screen via Rich Console and restores shell termios state."""
-        # 1. Rich Console restores normal screen buffer & cursor
+    def exit_alternate_screen(self) -> None:
+        super().exit_alternate_screen()
         self.console.set_alt_screen(False)
         self.console.show_cursor(True)
 
-        # 2. BaseCanvas restores exact outer shell termios attributes
-        super().exit_alternate_screen()
-
     def clear(self) -> None:
-        empty = {"char": " ", "fg": None, "bg": None, "style": 0}
+        empty = {"char": " ", "fg": None, "bg": None, "style": 0, "ul_fg": None}
         for y in range(self.height):
             for x in range(self.width):
                 self.grid[y][x] = empty.copy()
 
-    def put_str(self, x: int, y: int, text: str, fg=UNSET, bg=UNSET, style=UNSET) -> None:
+    def put_str(self, x: int, y: int, text: str, fg=UNSET, bg=UNSET, style=UNSET, ul_fg=UNSET) -> None:
         if y < 0 or y >= self.height:
             return
         for i, char in enumerate(text):
@@ -144,8 +188,10 @@ class RichCanvas(BaseCanvas):
                     cell["bg"] = bg
                 if style is not UNSET:
                     cell["style"] = style
+                if ul_fg is not UNSET:
+                    cell["ul_fg"] = ul_fg
 
-    def edit_region_colors(self, x: int, y: int, w: int, h: int, fg=UNSET, bg=UNSET, style=UNSET) -> None:
+    def edit_region_colors(self, x: int, y: int, w: int, h: int, fg=UNSET, bg=UNSET, style=UNSET, ul_fg=UNSET) -> None:
         for cy in range(max(0, y), min(self.height, y + h)):
             for cx in range(max(0, x), min(self.width, x + w)):
                 cell = self.grid[cy][cx]
@@ -155,6 +201,8 @@ class RichCanvas(BaseCanvas):
                     cell["bg"] = bg
                 if style is not UNSET:
                     cell["style"] = style
+                if ul_fg is not UNSET:
+                    cell["ul_fg"] = ul_fg
 
     def render(self) -> None:
         buf = []
@@ -172,12 +220,22 @@ class RichCanvas(BaseCanvas):
 
                 app(f"\033[{y+1};{x+1}H")
 
-                curr_style_data = (row[x]["fg"], row[x]["bg"], row[x]["style"])
+                curr_style_data = (
+                    row[x]["fg"],
+                    row[x]["bg"],
+                    row[x]["style"],
+                    row[x]["ul_fg"]
+                )
                 char_buffer = []
 
                 while (
                     x < self.width
-                    and (row[x]["fg"], row[x]["bg"], row[x]["style"]) == curr_style_data
+                    and (
+                        row[x]["fg"],
+                        row[x]["bg"],
+                        row[x]["style"],
+                        row[x]["ul_fg"]
+                    ) == curr_style_data
                     and row[x] != front_row[x]
                 ):
                     char_buffer.append(row[x]["char"])

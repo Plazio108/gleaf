@@ -11,14 +11,7 @@ from .utils import managed_canvas, enable_suspend, handoff
 HAS_NUMBA = HAS_NUMPY = HAS_CURSES = HAS_RICH = False
 
 try:
-    from .backends.numba_backend import NumbaCanvas
-    HAS_NUMBA = True
-except ImportError:
-    pass
-
-try:
     from .backends.numpy_backend import NumPyCanvas
-    from .backends.fast_numpy_backend import FastNumPyCanvas
     HAS_NUMPY = True
 except ImportError:
     pass
@@ -41,8 +34,8 @@ def get_canvas_class(backend: str = "auto"):
     backend = backend.lower().strip()
 
     if backend == "auto":
-        if HAS_NUMBA:
-            return NumbaCanvas, "Numba (Parallel JIT)"
+        # if HAS_NUMBA:
+        #     return NumbaCanvas, "Numba (Parallel JIT)"
         if HAS_NUMPY:
             return NumPyCanvas, "NumPy (Vectorized)"
         if HAS_RICH:
@@ -52,12 +45,12 @@ def get_canvas_class(backend: str = "auto"):
         return PurePythonCanvas, "Pure Python (Zero-Dependency)"
 
     # Manual forces
-    if backend == "numba" and HAS_NUMBA:
-        return NumbaCanvas, "Numba"
+    # if backend == "numba" and HAS_NUMBA:
+    #     return NumbaCanvas, "Numba"
     if backend == "numpy" and HAS_NUMPY:
         return NumPyCanvas, "NumPy"
-    if backend == "fast_numpy" and HAS_NUMPY:
-        return FastNumPyCanvas, "Fast NumPy"
+    # if backend == "fast_numpy" and HAS_NUMPY:
+    #     return FastNumPyCanvas, "Fast NumPy"
     if backend == "rich" and HAS_RICH:
         return RichCanvas, "Rich"
     if backend == "curses" and HAS_CURSES:

@@ -27,12 +27,34 @@ class NumPyCanvas(BaseCanvas):
 
         self.caps = TerminalCaps()
         self._style_cache = {}
+        
+        # --- Prebind capabilities to eliminate hasattr overhead in hot loops ---
+        if hasattr(self.caps, "modifiers_to_sgr"):
+            self._mod_func = self.caps.modifiers_to_sgr
+        elif hasattr(self.caps, "get_modifier_sgr"):
+            self._mod_func = self.caps.get_modifier_sgr
+        else:
+            self._mod_func = None
+
+        self._fg_func = (
+            self.caps.sgr_fg if hasattr(self.caps, "sgr_fg")
+            else (self.caps.fg_sgr if hasattr(self.caps, "fg_sgr") else None)
+        )
+        self._bg_func = (
+            self.caps.sgr_bg if hasattr(self.caps, "sgr_bg")
+            else (self.caps.bg_sgr if hasattr(self.caps, "bg_sgr") else None)
+        )
+        self._ul_func = (
+            self.caps.sgr_ul if hasattr(self.caps, "sgr_ul")
+            else (self.caps.ul_sgr if hasattr(self.caps, "ul_sgr") else None)
+        )
+
         self._init_buffers(self.width, self.height)
 
     def _init_buffers(self, w: int, h: int) -> None:
         """Allocates backend struct-of-arrays memory layout."""
         # Back buffers
-        self.b_char = np.full((h, w), 32, dtype=np.uint32)  # Ordinal 32 = ' '
+        self.b_char = np.full((h, w), 32, dtype=np.uint32)
         self.b_fg_r = np.zeros((h, w), dtype=np.uint8)
         self.b_fg_g = np.zeros((h, w), dtype=np.uint8)
         self.b_fg_b = np.zeros((h, w), dtype=np.uint8)
@@ -48,10 +70,9 @@ class NumPyCanvas(BaseCanvas):
         self.b_ul_b = np.zeros((h, w), dtype=np.uint8)
         self.b_has_ul = np.zeros((h, w), dtype=np.uint8)
 
-        # uint32 allows full bitmask support beyond 255
         self.b_style = np.zeros((h, w), dtype=np.uint32)
 
-        # Front buffers (initialized with sentinel values to force initial full render)
+        # Front buffers
         self.f_char = np.full((h, w), 0xFFFFFFFF, dtype=np.uint32)
         self.f_fg_r = np.zeros((h, w), dtype=np.uint8)
         self.f_fg_g = np.zeros((h, w), dtype=np.uint8)
@@ -172,7 +193,6 @@ class NumPyCanvas(BaseCanvas):
         text_offset_end = text_offset_start + (x_end - x_start)
         target_text = text[text_offset_start:text_offset_end]
 
-        # Vectorized Unicode conversion to uint32
         char_ords = np.fromiter((ord(c) for c in target_text), dtype=np.uint32, count=len(target_text))
         self.b_char[y, x_start:x_end] = char_ords
 
@@ -248,16 +268,13 @@ class NumPyCanvas(BaseCanvas):
             self.b_style[region] = 0 if style is None else style
 
     def _style_to_sgr(self, flags: int) -> str:
-        """Translates style bitmask to ANSI SGR string via TerminalCaps with memoization."""
+        """Translates style bitmask to ANSI SGR string via prebound/memoized cache."""
         if flags in self._style_cache:
             return self._style_cache[flags]
 
-        if hasattr(self.caps, "modifiers_to_sgr"):
-            sgr = self.caps.modifiers_to_sgr(flags)
-        elif hasattr(self.caps, "get_modifier_sgr"):
-            sgr = self.caps.get_modifier_sgr(flags)
+        if self._mod_func is not None:
+            sgr = self._mod_func(flags)
         else:
-            # Native fallback using caps Modifiers bitmask constants
             sgr_list = []
             if flags & Modifiers.BOLD:
                 sgr_list.append("1")
@@ -294,24 +311,18 @@ class NumPyCanvas(BaseCanvas):
         return sgr
 
     def _fg_sgr(self, r: int, g: int, b: int) -> str:
-        if hasattr(self.caps, "sgr_fg"):
-            return self.caps.sgr_fg(r, g, b)
-        elif hasattr(self.caps, "fg_sgr"):
-            return self.caps.fg_sgr(r, g, b)
+        if self._fg_func is not None:
+            return self._fg_func(r, g, b)
         return f"38;2;{r};{g};{b}"
 
     def _bg_sgr(self, r: int, g: int, b: int) -> str:
-        if hasattr(self.caps, "sgr_bg"):
-            return self.caps.sgr_bg(r, g, b)
-        elif hasattr(self.caps, "bg_sgr"):
-            return self.caps.bg_sgr(r, g, b)
+        if self._bg_func is not None:
+            return self._bg_func(r, g, b)
         return f"48;2;{r};{g};{b}"
 
     def _ul_sgr(self, r: int, g: int, b: int) -> str:
-        if hasattr(self.caps, "sgr_ul"):
-            return self.caps.sgr_ul(r, g, b)
-        elif hasattr(self.caps, "ul_sgr"):
-            return self.caps.ul_sgr(r, g, b)
+        if self._ul_func is not None:
+            return self._ul_func(r, g, b)
         return f"58;2;{r};{g};{b}"
 
     def render(self) -> None:
@@ -340,7 +351,6 @@ class NumPyCanvas(BaseCanvas):
             y, x = y_indices[i], x_indices[i]
             app(f"\033[{y+1};{x+1}H")
 
-            # Extract cell metadata for matching contiguous run
             st = self.b_style[y, x]
             has_fg, fg_r, fg_g, fg_b = self.b_has_fg[y, x], self.b_fg_r[y, x], self.b_fg_g[y, x], self.b_fg_b[y, x]
             has_bg, bg_r, bg_g, bg_b = self.b_has_bg[y, x], self.b_bg_r[y, x], self.b_bg_g[y, x], self.b_bg_b[y, x]
@@ -369,7 +379,6 @@ class NumPyCanvas(BaseCanvas):
                 i += 1
                 if i < n and y_indices[i] == y and x_indices[i] == x + 1:
                     nx = x_indices[i]
-                    # Check if next contiguous cell matches current style span
                     if (self.b_style[y, nx] != st or
                         self.b_has_fg[y, nx] != has_fg or
                         self.b_has_bg[y, nx] != has_bg or

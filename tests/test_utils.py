@@ -11,15 +11,39 @@ import subprocess
 from gleaf.caps import Modifiers
 from gleaf.utils import managed_canvas, handoff, enable_suspend
 
+# -----------------------------------------------------------------------------
+# Backend Import Strategy
+# -----------------------------------------------------------------------------
+
 from gleaf.backends.pure_python import PurePythonCanvas
+from gleaf.styles import Style
+
 try:
     from gleaf.backends.curses_backend import CursesCanvas
 except ImportError:
     CursesCanvas = None
+
 try:
     from gleaf.backends.rich_backend import RichCanvas
 except ImportError:
     RichCanvas = None
+
+try:
+    from gleaf.backends.numpy_backend import NumPyCanvas
+    from gleaf.backends.fast_numpy_backend import FastNumPyCanvas
+except ImportError:
+    NumPyCanvas = None
+
+try:
+    from gleaf.backends.numba_backend import NumbaCanvas
+except ImportError:
+    NumbaCanvas = None
+
+try:
+    from gleaf.backends.numba_backend import NumbaCanvas, warmup_numba_jit
+except ImportError:
+    NumbaCanvas = None
+    warmup_numba_jit = None
 
 
 def init_backend(backend_name: str):
@@ -28,6 +52,15 @@ def init_backend(backend_name: str):
         return CursesCanvas(), "Curses"
     if backend_name in ("rich", "r") and RichCanvas:
         return RichCanvas(), "Rich"
+    if backend_name in ("numpy", "np") and NumPyCanvas:
+        return NumPyCanvas(), "NumPy"
+    if backend_name in ("fast_numpy", "fnp") and FastNumPyCanvas:
+        return FastNumPyCanvas(), "Fast NumPy"
+    if backend_name in ("numba", "nb") and NumbaCanvas:
+        print("Warming up Numba JIT compiler...")
+        warmup_numba_jit()  # Silent compilation on 1x1 dummy arrays
+        return NumbaCanvas(), "Numba JIT"
+
     return PurePythonCanvas(), "Pure Python"
 
 
