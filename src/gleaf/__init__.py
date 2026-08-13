@@ -38,10 +38,10 @@ def get_canvas_class(backend: str = "auto"):
         #     return NumbaCanvas, "Numba (Parallel JIT)"
         if HAS_NUMPY:
             return NumPyCanvas, "NumPy (Vectorized)"
-        if HAS_RICH:
-            return RichCanvas, "Rich (Segment Builder)"
-        if HAS_CURSES:
-            return CursesCanvas, "Curses (Native)"
+        # if HAS_RICH:
+        #     return RichCanvas, "Rich (Segment Builder)"
+        # if HAS_CURSES:
+        #     return CursesCanvas, "Curses (Native)"
         return PurePythonCanvas, "Pure Python (Zero-Dependency)"
 
     # Manual forces
