@@ -3,27 +3,31 @@ gleaf - Adaptive High-Performance Terminal Canvas.
 Supports numba, numpy, curses, rich, and pure python fallbacks.
 """
 
+from .backends.base import BaseCanvas
 from .backends.pure_python import PurePythonCanvas
-from .styles import Style, Modifiers
 from .caps import TerminalCaps
-from .utils import managed_canvas, enable_suspend, handoff
+from .styles import Modifiers, Style
+from .utils import enable_suspend, handoff, managed_canvas
 
 HAS_NUMBA = HAS_NUMPY = HAS_CURSES = HAS_RICH = False
 
 try:
     from .backends.numpy_backend import NumPyCanvas
+
     HAS_NUMPY = True
 except ImportError:
     pass
 
 try:
     from .backends.rich_backend import RichCanvas
+
     HAS_RICH = True
 except ImportError:
     pass
 
 try:
     from .backends.curses_backend import CursesCanvas
+
     HAS_CURSES = True
 except ImportError:
     pass
@@ -58,8 +62,7 @@ def get_canvas_class(backend: str = "auto"):
     if backend in ("pure", "python"):
         return PurePythonCanvas, "Pure Python"
 
-    raise ImportError(
-        f"Backend '{backend}' requested but dependencies are missing.")
+    raise ImportError(f"Backend '{backend}' requested but dependencies are missing.")
 
 
 def TerminalCanvas(width: int = None, height: int = None, backend: str = "auto"):
@@ -68,6 +71,13 @@ def TerminalCanvas(width: int = None, height: int = None, backend: str = "auto")
 
 
 __all__ = [
-    "TerminalCanvas", "get_canvas_class", "Style", "Modifiers", "TerminalCaps",
-    "managed_canvas", "enable_suspend", "handoff"
+    "BaseCanvas",
+    "Modifiers",
+    "Style",
+    "TerminalCanvas",
+    "TerminalCaps",
+    "enable_suspend",
+    "get_canvas_class",
+    "handoff",
+    "managed_canvas",
 ]
