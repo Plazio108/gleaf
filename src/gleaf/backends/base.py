@@ -1,9 +1,9 @@
 """Base Interface for Canvas Backends."""
 
-import sys
 import shutil
+import sys
 import textwrap
-from typing import Optional, List, Tuple
+
 from ..caps import TerminalCaps
 
 try:
@@ -16,7 +16,7 @@ UNSET = object()  # Sentinel to distinguish between explicit None vs unpassed ar
 
 
 class BaseCanvas:
-    def __init__(self, width: Optional[int] = None, height: Optional[int] = None):
+    def __init__(self, width: int | None = None, height: int | None = None):
         self.caps = TerminalCaps()
         w, h = shutil.get_terminal_size((80, 24))
         self.width = width or w
@@ -31,34 +31,59 @@ class BaseCanvas:
     def get_char(self, x: int, y: int) -> str:
         raise NotImplementedError
 
-    def get_fg(self, x: int, y: int) -> Optional[Tuple[int, int, int]]:
+    def get_fg(self, x: int, y: int) -> tuple[int, int, int] | None:
         raise NotImplementedError
 
-    def get_bg(self, x: int, y: int) -> Optional[Tuple[int, int, int]]:
+    def get_bg(self, x: int, y: int) -> tuple[int, int, int] | None:
         raise NotImplementedError
 
     def get_style(self, x: int, y: int) -> int:
         raise NotImplementedError
 
-    def get_cell(self, x: int, y: int) -> Tuple[str, Optional[Tuple[int, int, int]], Optional[Tuple[int, int, int]], int]:
+    def get_cell(
+        self, x: int, y: int
+    ) -> tuple[str, tuple[int, int, int] | None, tuple[int, int, int] | None, int]:
         """Returns (char, fg, bg, style) at (x, y)."""
-        return (self.get_char(x, y), self.get_fg(x, y), self.get_bg(x, y), self.get_style(x, y))
+        return (
+            self.get_char(x, y),
+            self.get_fg(x, y),
+            self.get_bg(x, y),
+            self.get_style(x, y),
+        )
 
     # --- Default Region / Zone Getters (Fallback using Cell Getters) ---
-    def get_region_chars(self, x: int, y: int, w: int, h: int) -> List[List[str]]:
-        return [[self.get_char(cx, cy) for cx in range(x, x + w)] for cy in range(y, y + h)]
+    def get_region_chars(self, x: int, y: int, w: int, h: int) -> list[list[str]]:
+        return [
+            [self.get_char(cx, cy) for cx in range(x, x + w)] for cy in range(y, y + h)
+        ]
 
-    def get_region_fg(self, x: int, y: int, w: int, h: int) -> List[List[Optional[Tuple[int, int, int]]]]:
-        return [[self.get_fg(cx, cy) for cx in range(x, x + w)] for cy in range(y, y + h)]
+    def get_region_fg(
+        self, x: int, y: int, w: int, h: int
+    ) -> list[list[tuple[int, int, int] | None]]:
+        return [
+            [self.get_fg(cx, cy) for cx in range(x, x + w)] for cy in range(y, y + h)
+        ]
 
-    def get_region_bg(self, x: int, y: int, w: int, h: int) -> List[List[Optional[Tuple[int, int, int]]]]:
-        return [[self.get_bg(cx, cy) for cx in range(x, x + w)] for cy in range(y, y + h)]
+    def get_region_bg(
+        self, x: int, y: int, w: int, h: int
+    ) -> list[list[tuple[int, int, int] | None]]:
+        return [
+            [self.get_bg(cx, cy) for cx in range(x, x + w)] for cy in range(y, y + h)
+        ]
 
-    def get_region_styles(self, x: int, y: int, w: int, h: int) -> List[List[int]]:
-        return [[self.get_style(cx, cy) for cx in range(x, x + w)] for cy in range(y, y + h)]
+    def get_region_styles(self, x: int, y: int, w: int, h: int) -> list[list[int]]:
+        return [
+            [self.get_style(cx, cy) for cx in range(x, x + w)] for cy in range(y, y + h)
+        ]
 
-    def get_region_cells(self, x: int, y: int, w: int, h: int) -> List[List[Tuple[str, Optional[Tuple[int, int, int]], Optional[Tuple[int, int, int]], int]]]:
-        return [[self.get_cell(cx, cy) for cx in range(x, x + w)] for cy in range(y, y + h)]
+    def get_region_cells(
+        self, x: int, y: int, w: int, h: int
+    ) -> list[
+        list[tuple[str, tuple[int, int, int] | None, tuple[int, int, int] | None, int]]
+    ]:
+        return [
+            [self.get_cell(cx, cy) for cx in range(x, x + w)] for cy in range(y, y + h)
+        ]
 
     # --- Canvas management ---
     def resize(self, width: int, height: int):
@@ -72,7 +97,9 @@ class BaseCanvas:
     def clear(self):
         raise NotImplementedError
 
-    def put_str(self, x: int, y: int, text: str, fg=UNSET, bg=UNSET, style=UNSET):
+    def put_str(
+        self, x: int, y: int, text: str, fg=UNSET, bg=UNSET, style=UNSET, ul_fg=None
+    ):
         """Draws string at (x,y). Unpassed parameters preserve existing cell properties."""
         raise NotImplementedError
 
@@ -81,11 +108,12 @@ class BaseCanvas:
         x: int,
         y: int,
         text: str,
-        max_w: Optional[int] = None,
-        max_h: Optional[int] = None,
+        max_w: int | None = None,
+        max_h: int | None = None,
         fg=UNSET,
         bg=UNSET,
         style=UNSET,
+        ul_fg=None,
         wrap: bool = True,
     ) -> int:
         """
@@ -93,7 +121,7 @@ class BaseCanvas:
         Returns the number of lines written.
         """
         lines = text.splitlines()
-        formatted_lines: List[str] = []
+        formatted_lines: list[str] = []
 
         eff_w = max_w if max_w is not None else (self.width - x)
         if eff_w <= 0:
@@ -115,18 +143,12 @@ class BaseCanvas:
             if py >= self.height:
                 break
             if py >= 0:
-                self.put_str(x, py, line_text, fg=fg, bg=bg, style=style)
+                self.put_str(x, py, line_text, fg=fg, bg=bg, style=style, ul_fg=ul_fg)
 
         return len(lines_to_draw)
 
     def edit_region_colors(
-        self,
-        x: int,
-        y: int,
-        w: int,
-        h: int,
-        fg=UNSET,
-        bg=UNSET,
+        self, x: int, y: int, w: int, h: int, fg=UNSET, bg=UNSET, ul_fg=None
     ):
         """Edits foreground and/or background colors in a bounding box without affecting text or styles."""
         x1, x2 = max(0, x), min(self.width, x + w)
@@ -140,6 +162,8 @@ class BaseCanvas:
                         cell.fg = fg
                     if bg is not UNSET:
                         cell.bg = bg
+                    if ul_fg is not None:
+                        cell.ul_fg = ul_fg
 
     def edit_region_style(
         self,
@@ -223,9 +247,7 @@ class BaseCanvas:
         if termios is not None and self._shell_mode is not None:
             try:
                 termios.tcsetattr(
-                    sys.stdin.fileno(),
-                    termios.TCSAFLUSH,
-                    self._shell_mode
+                    sys.stdin.fileno(), termios.TCSAFLUSH, self._shell_mode
                 )
             except (termios.error, ValueError, AttributeError):
                 pass

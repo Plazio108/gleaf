@@ -1,7 +1,5 @@
 """High-Performance Rich Backend with Single-Pass Frame Buffering."""
 
-import sys
-from typing import Optional, Tuple
 from rich.console import Console
 from rich.style import Style
 
@@ -10,15 +8,15 @@ try:
 except ImportError:
     from gleaf.caps import Modifiers, TerminalCaps
 
-from .base import BaseCanvas, UNSET
+from .base import UNSET, BaseCanvas
 
 
 class RichCanvas(BaseCanvas):
     def __init__(
         self,
-        width: Optional[int] = None,
-        height: Optional[int] = None,
-        console: Optional[Console] = None
+        width: int | None = None,
+        height: int | None = None,
+        console: Console | None = None,
     ):
         self.console = console or Console()
 
@@ -35,18 +33,20 @@ class RichCanvas(BaseCanvas):
 
     def _create_grid(self, w: int, h: int):
         return [
-            [{"char": " ", "fg": None, "bg": None, "style": 0, "ul_fg": None}
-                for _ in range(w)]
+            [
+                {"char": " ", "fg": None, "bg": None, "style": 0, "ul_fg": None}
+                for _ in range(w)
+            ]
             for _ in range(h)
         ]
 
     def _get_style(
         self,
-        fg: Optional[Tuple[int, int, int]],
-        bg: Optional[Tuple[int, int, int]],
+        fg: tuple[int, int, int] | None,
+        bg: tuple[int, int, int] | None,
         style_flags: int,
-        ul_fg: Optional[Tuple[int, int, int]] = None
-    ) -> Optional[Style]:
+        ul_fg: tuple[int, int, int] | None = None,
+    ) -> Style | None:
         key = (fg, bg, style_flags, ul_fg)
         if key in self._style_cache:
             return self._style_cache[key]
@@ -60,7 +60,8 @@ class RichCanvas(BaseCanvas):
         italic = bool(style_flags & Modifiers.ITALIC)
 
         ext_ul = bool(
-            style_flags & (
+            style_flags
+            & (
                 Modifiers.CURLY_UNDERLINE
                 | Modifiers.DOTTED_UNDERLINE
                 | Modifiers.DASHED_UNDERLINE
@@ -120,12 +121,12 @@ class RichCanvas(BaseCanvas):
             return self.grid[y][x]["char"]
         return " "
 
-    def get_fg(self, x: int, y: int) -> Optional[Tuple[int, int, int]]:
+    def get_fg(self, x: int, y: int) -> tuple[int, int, int] | None:
         if 0 <= x < self.width and 0 <= y < self.height:
             return self.grid[y][x]["fg"]
         return None
 
-    def get_bg(self, x: int, y: int) -> Optional[Tuple[int, int, int]]:
+    def get_bg(self, x: int, y: int) -> tuple[int, int, int] | None:
         if 0 <= x < self.width and 0 <= y < self.height:
             return self.grid[y][x]["bg"]
         return None
@@ -145,8 +146,10 @@ class RichCanvas(BaseCanvas):
 
         # Invalidate front buffer to force a total redraw on next frame
         self.front_buffer = [
-            [{"char": None, "fg": None, "bg": None, "style": None, "ul_fg": None}
-                for _ in range(self.width)]
+            [
+                {"char": None, "fg": None, "bg": None, "style": None, "ul_fg": None}
+                for _ in range(self.width)
+            ]
             for _ in range(self.height)
         ]
 
@@ -173,7 +176,9 @@ class RichCanvas(BaseCanvas):
             for x in range(self.width):
                 self.grid[y][x] = empty.copy()
 
-    def put_str(self, x: int, y: int, text: str, fg=UNSET, bg=UNSET, style=UNSET, ul_fg=UNSET) -> None:
+    def put_str(
+        self, x: int, y: int, text: str, fg=UNSET, bg=UNSET, style=UNSET, ul_fg=UNSET
+    ) -> None:
         if y < 0 or y >= self.height:
             return
         for i, char in enumerate(text):
@@ -191,7 +196,17 @@ class RichCanvas(BaseCanvas):
                 if ul_fg is not UNSET:
                     cell["ul_fg"] = ul_fg
 
-    def edit_region_colors(self, x: int, y: int, w: int, h: int, fg=UNSET, bg=UNSET, style=UNSET, ul_fg=UNSET) -> None:
+    def edit_region_colors(
+        self,
+        x: int,
+        y: int,
+        w: int,
+        h: int,
+        fg=UNSET,
+        bg=UNSET,
+        style=UNSET,
+        ul_fg=UNSET,
+    ) -> None:
         for cy in range(max(0, y), min(self.height, y + h)):
             for cx in range(max(0, x), min(self.width, x + w)):
                 cell = self.grid[cy][cx]
@@ -218,24 +233,20 @@ class RichCanvas(BaseCanvas):
                     x += 1
                     continue
 
-                app(f"\033[{y+1};{x+1}H")
+                app(f"\033[{y + 1};{x + 1}H")
 
                 curr_style_data = (
                     row[x]["fg"],
                     row[x]["bg"],
                     row[x]["style"],
-                    row[x]["ul_fg"]
+                    row[x]["ul_fg"],
                 )
                 char_buffer = []
 
                 while (
                     x < self.width
-                    and (
-                        row[x]["fg"],
-                        row[x]["bg"],
-                        row[x]["style"],
-                        row[x]["ul_fg"]
-                    ) == curr_style_data
+                    and (row[x]["fg"], row[x]["bg"], row[x]["style"], row[x]["ul_fg"])
+                    == curr_style_data
                     and row[x] != front_row[x]
                 ):
                     char_buffer.append(row[x]["char"])
