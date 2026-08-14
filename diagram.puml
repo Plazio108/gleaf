@@ -1,0 +1,279 @@
+@startuml 'Diagram'
+skinparam classAttributeIconSize 0
+package "gleaf.caps" {
+  class TerminalCaps {
+    +has_256color
+    +has_extended_underline
+    +has_italic
+    +has_modifiers
+    +has_overline
+    +has_truecolor
+    +no_color
+    +__init__(has_truecolor: Optional[bool],\n        has_256color: Optional[bool],\n        has_extended_underline: Optional[bool],\n        has_modifiers: Optional[bool])
+    +filter_style(style: int): int
+    +format_style_ansi(fg: Optional[Union[RGB, int]],\n        bg: Optional[Union[RGB, int]], style: int,\n        ul_fg: Optional[Union[RGB, int]]): str
+  }
+}
+package "gleaf.styles" {
+  class Modifiers {
+    +ALTCHARSET
+    +BLINK
+    +BOLD
+    +CURLY_UNDERLINE
+    +DASHED_UNDERLINE
+    +DIM
+    +DOTTED_UNDERLINE
+    +DOUBLE_UNDERLINE
+    +HIDDEN
+    +ITALIC
+    +NONE
+    +NORMAL
+    +OVERLINE
+    +PROTECT
+    +REVERSE
+    +STANDOUT
+    +STRIKETHROUGH
+    +UNDERLINE
+    #_LEGACY_BLINK
+    #_LEGACY_BOLD
+    #_LEGACY_DIM
+    #_LEGACY_ITALIC
+    #_LEGACY_OVERLINE
+    #_LEGACY_REVERSE
+    #_LEGACY_STRIKE
+    #_LEGACY_UNDERLINE
+  }
+}
+package "gleaf.backends.numpy_backend" {
+  class NumPyCanvas {
+    #_bg_func
+    #_fg_func
+    #_mod_func
+    #_style_cache
+    #_ul_func
+    +b_bg_b
+    +b_bg_g
+    +b_bg_r
+    +b_char
+    +b_fg_b
+    +b_fg_g
+    +b_fg_r
+    +b_has_bg
+    +b_has_fg
+    +b_has_ul
+    +b_style
+    +b_ul_b
+    +b_ul_g
+    +b_ul_r
+    +caps: TerminalCaps
+    +f_bg_b
+    +f_bg_g
+    +f_bg_r
+    +f_char
+    +f_fg_b
+    +f_fg_g
+    +f_fg_r
+    +f_has_bg
+    +f_has_fg
+    +f_has_ul
+    +f_style
+    +f_ul_b
+    +f_ul_g
+    +f_ul_r
+    +height
+    +width
+    +__init__(width: Optional[int], height: Optional[int])
+    #_init_buffers(w: int, h: int): None
+    +get_char(x: int, y: int): str <<override>>
+    +get_fg(x: int, y: int): Optional[Tuple[int, int, int]] <<override>>
+    +get_bg(x: int, y: int): Optional[Tuple[int, int, int]] <<override>>
+    +get_ul_fg(x: int, y: int): Optional[Tuple[int, int, int]]
+    +get_style(x: int, y: int): int <<override>>
+    #_clamp_region(x: int, y: int, w: int, h: int): Tuple[slice, slice]
+    +get_region_chars(x: int, y: int, w: int, h: int): np.ndarray <<override>>
+    +get_region_fg(x: int, y: int, w: int, h: int): np.ndarray <<override>>
+    +get_region_bg(x: int, y: int, w: int, h: int): np.ndarray <<override>>
+    +get_region_styles(x: int, y: int, w: int, h: int): np.ndarray <<override>>
+    +resize(new_width: int, new_height: int): None <<override>>
+    +auto_resize(): bool <<override>>
+    +clear(): None <<override>>
+    +put_str(x: int, y: int, text: str, fg, bg, style, ul_fg): None <<override>>
+    +edit_region_colors(x: int, y: int, w: int, h: int, fg, bg,\n        style, ul_fg): None <<override>>
+    #_style_to_sgr(flags: int): str
+    #_fg_sgr(r: int, g: int, b: int): str
+    #_bg_sgr(r: int, g: int, b: int): str
+    #_ul_sgr(r: int, g: int, b: int): str
+    +render(): None <<override>>
+  }
+}
+package "gleaf.backends.base" {
+  abstract class BaseCanvas {
+    #_prog_mode
+    #_shell_mode
+    +caps: TerminalCaps
+    +height
+    +width
+    +__init__(width: Optional[int], height: Optional[int])
+    {abstract} +get_char(x: int, y: int): str
+    {abstract} +get_fg(x: int, y: int): Optional[Tuple[int, int, int]]
+    {abstract} +get_bg(x: int, y: int): Optional[Tuple[int, int, int]]
+    {abstract} +get_style(x: int, y: int): int
+    +get_cell(x: int, y: int): Tuple[str, Optional[Tuple[int, int, int]], Optional[Tuple[int, int, int]], int]
+    +get_region_chars(x: int, y: int, w: int, h: int): List[List[str]]
+    +get_region_fg(x: int, y: int, w: int, h: int): List[List[Optional[Tuple[int, int, int]]]]
+    +get_region_bg(x: int, y: int, w: int, h: int): List[List[Optional[Tuple[int, int, int]]]]
+    +get_region_styles(x: int, y: int, w: int, h: int): List[List[int]]
+    +get_region_cells(x: int, y: int, w: int, h: int): List[List[Tuple[str, Optional[Tuple[int, int, int]], Optional[Tuple[int, int, int]], int]]]
+    {abstract} +resize(width: int, height: int)
+    +auto_resize()
+    {abstract} +clear()
+    {abstract} +put_str(x: int, y: int, text: str, fg, bg, style)
+    +put_block(x: int, y: int, text: str, max_w: Optional[int],\n        max_h: Optional[int], fg, bg, style, wrap: bool): int
+    +edit_region_colors(x: int, y: int, w: int, h: int, fg, bg)
+    +edit_region_style(x: int, y: int, w: int, h: int, style: int,\n        mode: str)
+    {abstract} +render()
+    #_save_shell_mode()
+    +enter_alternate_screen()
+    +exit_alternate_screen()
+  }
+}
+package "gleaf.backends.rich_backend" {
+  class RichCanvas {
+    #_style_cache
+    +caps: TerminalCaps
+    +console
+    +front_buffer
+    +grid
+    +height
+    +width
+    +__init__(width: Optional[int], height: Optional[int],\n        console: Optional[Console])
+    #_create_grid(w: int, h: int)
+    #_get_style(fg: Optional[Tuple[int, int, int]],\n        bg: Optional[Tuple[int, int, int]], style_flags: int,\n        ul_fg: Optional[Tuple[int, int, int]]): Optional[Style]
+    +get_char(x: int, y: int): str <<override>>
+    +get_fg(x: int, y: int): Optional[Tuple[int, int, int]] <<override>>
+    +get_bg(x: int, y: int): Optional[Tuple[int, int, int]] <<override>>
+    +get_style(x: int, y: int): int <<override>>
+    +resize(new_width: int, new_height: int): None <<override>>
+    +auto_resize(): bool <<override>>
+    +enter_alternate_screen(): None <<override>>
+    +exit_alternate_screen(): None <<override>>
+    +clear(): None <<override>>
+    +put_str(x: int, y: int, text: str, fg, bg, style, ul_fg): None <<override>>
+    +edit_region_colors(x: int, y: int, w: int, h: int, fg, bg,\n        style, ul_fg): None <<override>>
+    +render(): None <<override>>
+  }
+}
+package "gleaf.backends.pure_python" {
+  class PurePythonCanvas {
+    #_current_bg: Optional[Union[RGB, int]]
+    #_current_fg: Optional[Union[RGB, int]]
+    #_current_style: int
+    #_current_ul_fg: Optional[Union[RGB, int]]
+    #_cursor_x: int
+    #_cursor_y: int
+    +caps
+    +front_buffer
+    +grid
+    +__init__(width: Optional[int], height: Optional[int],\n        caps: Optional[TerminalCaps])
+    #_create_grid(w: int, h: int)
+    +get_char(x: int, y: int): str <<override>>
+    +get_fg(x: int, y: int): Optional[Union[RGB, int]] <<override>>
+    +get_bg(x: int, y: int): Optional[Union[RGB, int]] <<override>>
+    +get_style(x: int, y: int): int <<override>>
+    +get_ul_fg(x: int, y: int): Optional[Union[RGB, int]]
+    #_invalidate_front_buffer()
+    +resize(width: int, height: int) <<override>>
+    +enter_alternate_screen() <<override>>
+    +exit_alternate_screen() <<override>>
+    +clear() <<override>>
+    +put_str(x: int, y: int, text: str, fg, bg, style, ul_fg) <<override>>
+    +edit_region_colors(x: int, y: int, w: int, h: int, fg, bg,\n        ul_fg) <<override>>
+    +edit_region_style(x: int, y: int, w: int, h: int, style: int,\n        mode: str) <<override>>
+    +render() <<override>>
+  }
+}
+package "gleaf.backends.legacy_fast_numpy_backend" {
+  class FastNumPyCanvas {
+    #_io_buf: bytearray
+    #_old_term
+    +back
+    +front
+    +height
+    +width
+    +__init__(width: Optional[int], height: Optional[int])
+    #_init_buffers(w: int, h: int): None
+    +get_char(x: int, y: int): str <<override>>
+    +get_fg(x: int, y: int): Optional[Tuple[int, int, int]] <<override>>
+    +get_bg(x: int, y: int): Optional[Tuple[int, int, int]] <<override>>
+    +get_style(x: int, y: int): int <<override>>
+    #_clamp_region(x: int, y: int, w: int, h: int): Tuple[slice, slice]
+    +get_region_chars(x: int, y: int, w: int, h: int): np.ndarray <<override>>
+    +get_region_fg(x: int, y: int, w: int, h: int): np.ndarray <<override>>
+    +get_region_bg(x: int, y: int, w: int, h: int): np.ndarray <<override>>
+    +get_region_styles(x: int, y: int, w: int, h: int): np.ndarray <<override>>
+    +resize(new_width: int, new_height: int): None <<override>>
+    +auto_resize(): bool <<override>>
+    +enter_alternate_screen(): None <<override>>
+    +exit_alternate_screen(): None <<override>>
+    +clear(): None <<override>>
+    +put_str(x: int, y: int, text: str, fg, bg, style): None <<override>>
+    +edit_region_colors(x: int, y: int, w: int, h: int, fg, bg,\n        style): None <<override>>
+    #_style_to_sgr(flags: int): str
+    +render(): None <<override>>
+  }
+}
+package "gleaf.backends.curses_backend" {
+  class CursesCanvas {
+    #_color_pair_cache
+    #_next_pair_id
+    +caps: TerminalCaps
+    +front_buffer
+    +grid
+    +height
+    +stdscr
+    +width
+    +__init__(stdscr, width: Optional[int], height: Optional[int])
+    #_create_grid(w: int, h: int)
+    #_snap_to_6x6x6(rgb: Tuple[int, int, int]): int
+    #_get_color_pair(fg: Optional[Tuple[int, int, int]],\n        bg: Optional[Tuple[int, int, int]]): int
+    #_map_curses_attrs(style_flags: int): int
+    +get_char(x: int, y: int): str <<override>>
+    +get_fg(x: int, y: int): Optional[Tuple[int, int, int]] <<override>>
+    +get_bg(x: int, y: int): Optional[Tuple[int, int, int]] <<override>>
+    +get_style(x: int, y: int): int <<override>>
+    +resize(new_width: int, new_height: int): None <<override>>
+    +auto_resize(): bool <<override>>
+    +enter_alternate_screen() <<override>>
+    +exit_alternate_screen() <<override>>
+    +clear(): None <<override>>
+    +put_str(x: int, y: int, text: str, fg, bg, style, ul_fg): None <<override>>
+    +edit_region_colors(x: int, y: int, w: int, h: int, fg, bg,\n        style, ul_fg): None <<override>>
+    +render(): None <<override>>
+  }
+}
+package "gleaf.backends.legacy_numba_backend" {
+  class NumbaCanvas {
+    #_row_dirty
+    #_row_is_changed
+    +__init__(width: Optional[int], height: Optional[int])
+    #_init_buffers(w: int, h: int): None <<override>>
+    #_warmup_numba(): None
+    +clear(): None <<override>>
+    +resize(new_width: int, new_height: int): None <<override>>
+    +put_str(x: int, y: int, text: str, fg, bg, style, ul_fg): None <<override>>
+    +edit_region_colors(x: int, y: int, w: int, h: int, fg, bg,\n        style, ul_fg): None <<override>>
+    +render(): None <<override>>
+  }
+}
+IntFlag <|-- Modifiers
+BaseCanvas <|-- NumPyCanvas
+NumPyCanvas o-- TerminalCaps : caps
+BaseCanvas o-- TerminalCaps : caps
+BaseCanvas <|-- RichCanvas
+RichCanvas o-- TerminalCaps : caps
+BaseCanvas <|-- PurePythonCanvas
+BaseCanvas <|-- FastNumPyCanvas
+BaseCanvas <|-- CursesCanvas
+CursesCanvas o-- TerminalCaps : caps
+NumPyCanvas <|-- NumbaCanvas
+@enduml
