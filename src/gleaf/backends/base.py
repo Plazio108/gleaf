@@ -255,27 +255,23 @@ class BaseCanvas:
     def render_ansi_sequence(
         self, sequence: str | bytes, width: int, height: int
     ) -> str:
-        """Takes the raw ANSI string/bytes flushed by render(), parses its
-        absolute cursor positions and SGR colors, crops it to the specified
-        width and height rectangle, and returns a clean ANSI-formatted string.
-
-        Edge cases handled:
-        - Automatically decodes byte streams.
-        - 1-indexed to 0-indexed terminal coordinate conversion (\033[y;xH).
-        - Strict clipping: drops any characters or coordinates falling outside
-          the target width/height rectangle.
-        - SGR style and color state tracking per cell with optimized output flushing.
-        - Malformed escape sequences and implicit cursor wraps.
-        """
         if isinstance(sequence, bytes):
             sequence = sequence.decode("utf-8", errors="ignore")
 
-        # Initialize virtual grids for characters and their respective SGR styles
-        grid_char = [[" " for _ in range(width)] for _ in range(height)]
-        grid_sgr = [["0" for _ in range(width)] for _ in range(height)]
+        # Initialize a clean grid of spaces
+        grid = [[" " for _ in range(width)] for _ in range(height)]
 
-        current_sgr = "0"
         cy, cx = 0, 0
+        current_ansi = ""
+        last_y, last_x = -1, -1
+
+        def seal_last_run():
+            """Appends a reset code to the very last character written
+            before a cursor jump, preventing color from leaking into the grid spaces."""
+            nonlocal last_y, last_x
+            if last_y != -1 and last_x != -1:
+                grid[last_y][last_x] += "\033[0m"
+                last_y, last_x = -1, -1
 
         i = 0
         n = len(sequence)
@@ -284,71 +280,67 @@ class BaseCanvas:
             char = sequence[i]
 
             if char == "\033":
+                start = i
+                # Check for CSI [...]
                 if i + 1 < n and sequence[i + 1] == "[":
                     i += 2
-                    param_str = ""
                     while i < n and not (sequence[i].isalpha() or sequence[i] == "~"):
-                        param_str += sequence[i]
                         i += 1
-
                     if i < n:
                         command = sequence[i]
                         i += 1
+                        full_seq = sequence[start:i]
 
-                        # Handle Cursor Position (CUP): \033[y;xH or \033[y;xf
                         if command in ("H", "f"):
+                            # Cursor is jumping! Seal the previous run to prevent leaks.
+                            seal_last_run()
+
+                            # Parse the new coordinates
+                            param_str = full_seq[2:-1]
                             parts = param_str.split(";")
-                            if len(parts) >= 2:
-                                try:
-                                    cy = int(parts[0]) - 1 if parts[0] else 0
-                                    cx = int(parts[1]) - 1 if parts[1] else 0
-                                except ValueError:
-                                    pass
-                            elif len(parts) == 1 and parts[0] == "":
-                                cy, cx = 0, 0
-                        # Handle Select Graphic Rendition (SGR): \033[...m
-                        elif command == "m":
-                            current_sgr = param_str if param_str else "0"
+                            try:
+                                cy = (
+                                    int(parts[0]) - 1
+                                    if len(parts) > 0 and parts[0]
+                                    else 0
+                                )
+                                cx = (
+                                    int(parts[1]) - 1
+                                    if len(parts) > 1 and parts[1]
+                                    else 0
+                                )
+                            except ValueError:
+                                pass
+                        else:
+                            # SGR 'm' or any unexpected sequence: bundle it!
+                            current_ansi += full_seq
                 else:
+                    # Not a CSI sequence, just an isolated escape character. Bundle it.
+                    current_ansi += char
                     i += 1
-            elif char == "\n":
-                cy += 1
-                cx = 0
-                i += 1
-            elif char == "\r":
-                cx = 0
-                i += 1
-            else:
-                # Printable character: write only if strictly within the target rectangle bounds (cropping)
-                if 0 <= cy < height and 0 <= cx < width:
-                    grid_char[cy][cx] = char
-                    grid_sgr[cy][cx] = current_sgr
 
-                cx += 1
-                if cx >= width:
-                    cx = 0
+            elif char in ("\n", "\r"):
+                seal_last_run()
+                if char == "\n":
                     cy += 1
+                cx = 0
                 i += 1
 
-        # Re-serialize the cropped grid back into an optimized ANSI string
-        output_lines = []
-        for r in range(height):
-            line_parts = []
-            last_sgr = None
-            for c in range(width):
-                ch = grid_char[r][c]
-                sgr = grid_sgr[r][c]
+            else:
+                # It's a standard character.
+                # Place it in the grid with whatever ANSI string is pending.
+                if 0 <= cy < height and 0 <= cx < width:
+                    grid[cy][cx] = current_ansi + char
+                    last_y, last_x = cy, cx
 
-                # Only emit SGR escape code when the style/color changes
-                if sgr != last_sgr:
-                    line_parts.append(f"\033[{sgr}m")
-                    last_sgr = sgr
-                line_parts.append(ch)
+                current_ansi = (
+                    ""  # Cleared, so subsequent chars in this run get nothing
+                )
+                cx += 1
+                i += 1
 
-            # Reset formatting at the end of each line
-            if last_sgr is not None and last_sgr != "0":
-                line_parts.append("\033[0m")
+        # Seal the final run in the sequence
+        seal_last_run()
 
-            output_lines.append("".join(line_parts))
-
-        return "\n".join(output_lines)
+        # Join the grid into a single string
+        return "\n".join("".join(row) for row in grid)
