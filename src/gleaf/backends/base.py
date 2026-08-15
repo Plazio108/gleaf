@@ -253,8 +253,8 @@ class BaseCanvas:
             except (termios.error, ValueError, AttributeError):
                 pass
 
-    def render_ansi_to_rect(
-        self, sequence: Union[str, bytes], width: int, height: int
+    def render_ansi_sequence(
+        self, sequence: str | bytes, width: int, height: int
     ) -> str:
         """Parses a raw ANSI sequence, projects it to a strict width/height grid,
         and reconstructs an optimized, leak-proof ANSI string.
