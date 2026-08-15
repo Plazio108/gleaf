@@ -3,6 +3,7 @@
 import shutil
 import sys
 import textwrap
+import unicodedata
 
 from ..caps import TerminalCaps
 
@@ -252,26 +253,89 @@ class BaseCanvas:
             except (termios.error, ValueError, AttributeError):
                 pass
 
-    def render_ansi_sequence(
-        self, sequence: str | bytes, width: int, height: int
+    def render_ansi_to_rect(
+        self, sequence: Union[str, bytes], width: int, height: int
     ) -> str:
+        """Parses a raw ANSI sequence, projects it to a strict width/height grid,
+        and reconstructs an optimized, leak-proof ANSI string.
+        """
         if isinstance(sequence, bytes):
             sequence = sequence.decode("utf-8", errors="ignore")
 
-        # Initialize a clean grid of spaces
-        grid = [[" " for _ in range(width)] for _ in range(height)]
+        # Virtual grids
+        grid_char = [[" " for _ in range(width)] for _ in range(height)]
+        grid_sgr = [["0" for _ in range(width)] for _ in range(height)]
 
+        # ANSI State Machine Accumulator
+        sgr_state = {"fg": None, "bg": None, "ul": None, "styles": set()}
+        current_sgr = "0"
         cy, cx = 0, 0
-        current_ansi = ""
-        last_y, last_x = -1, -1
 
-        def seal_last_run():
-            """Appends a reset code to the very last character written
-            before a cursor jump, preventing color from leaking into the grid spaces."""
-            nonlocal last_y, last_x
-            if last_y != -1 and last_x != -1:
-                grid[last_y][last_x] += "\033[0m"
-                last_y, last_x = -1, -1
+        def parse_sgr(param_str: str):
+            """Additively parses SGR strings to track exact formatting state."""
+            parts = param_str.split(";") if param_str else ["0"]
+            i = 0
+            while i < len(parts):
+                p = parts[i]
+                code = int(p) if p else 0
+
+                if code == 0:
+                    sgr_state["fg"] = None
+                    sgr_state["bg"] = None
+                    sgr_state["ul"] = None
+                    sgr_state["styles"].clear()
+                elif code in (1, 2, 3, 4, 5, 7, 8, 9):
+                    sgr_state["styles"].add(code)
+                elif code == 22:
+                    sgr_state["styles"].discard(1)
+                    sgr_state["styles"].discard(2)
+                elif code in (23, 24, 25, 27, 28, 29):
+                    sgr_state["styles"].discard(
+                        {23: 3, 24: 4, 25: 5, 27: 7, 28: 8, 29: 9}[code]
+                    )
+                elif 30 <= code <= 37 or 90 <= code <= 97:
+                    sgr_state["fg"] = str(code)
+                elif code == 39:
+                    sgr_state["fg"] = None
+                elif 40 <= code <= 47 or 100 <= code <= 107:
+                    sgr_state["bg"] = str(code)
+                elif code == 49:
+                    sgr_state["bg"] = None
+                elif code in (38, 48, 58):
+                    if i + 2 < len(parts) and parts[i + 1] == "5":
+                        val = f"{code};5;{parts[i + 2]}"
+                        if code == 38:
+                            sgr_state["fg"] = val
+                        elif code == 48:
+                            sgr_state["bg"] = val
+                        elif code == 58:
+                            sgr_state["ul"] = val
+                        i += 2
+                    elif i + 4 < len(parts) and parts[i + 1] == "2":
+                        val = f"{code};2;{parts[i + 2]};{parts[i + 3]};{parts[i + 4]}"
+                        if code == 38:
+                            sgr_state["fg"] = val
+                        elif code == 48:
+                            sgr_state["bg"] = val
+                        elif code == 58:
+                            sgr_state["ul"] = val
+                        i += 4
+                elif code == 59:
+                    sgr_state["ul"] = None
+                i += 1
+
+        def state_to_sgr() -> str:
+            """Serializes current state to an absolute, reset-first SGR string."""
+            codes = []
+            if sgr_state["styles"]:
+                codes.extend(str(s) for s in sorted(sgr_state["styles"]))
+            if sgr_state["fg"]:
+                codes.append(sgr_state["fg"])
+            if sgr_state["bg"]:
+                codes.append(sgr_state["bg"])
+            if sgr_state["ul"]:
+                codes.append(sgr_state["ul"])
+            return "0;" + ";".join(codes) if codes else "0"
 
         i = 0
         n = len(sequence)
@@ -280,67 +344,102 @@ class BaseCanvas:
             char = sequence[i]
 
             if char == "\033":
-                start = i
-                # Check for CSI [...]
                 if i + 1 < n and sequence[i + 1] == "[":
                     i += 2
+                    param_str = ""
                     while i < n and not (sequence[i].isalpha() or sequence[i] == "~"):
+                        param_str += sequence[i]
                         i += 1
+
                     if i < n:
                         command = sequence[i]
                         i += 1
-                        full_seq = sequence[start:i]
 
                         if command in ("H", "f"):
-                            # Cursor is jumping! Seal the previous run to prevent leaks.
-                            seal_last_run()
-
-                            # Parse the new coordinates
-                            param_str = full_seq[2:-1]
                             parts = param_str.split(";")
-                            try:
-                                cy = (
-                                    int(parts[0]) - 1
-                                    if len(parts) > 0 and parts[0]
-                                    else 0
-                                )
-                                cx = (
-                                    int(parts[1]) - 1
-                                    if len(parts) > 1 and parts[1]
-                                    else 0
-                                )
-                            except ValueError:
-                                pass
-                        else:
-                            # SGR 'm' or any unexpected sequence: bundle it!
-                            current_ansi += full_seq
+                            if len(parts) >= 2:
+                                try:
+                                    cy = int(parts[0]) - 1 if parts[0] else 0
+                                    cx = int(parts[1]) - 1 if parts[1] else 0
+                                except ValueError:
+                                    pass
+                            elif len(parts) == 1 and parts[0] == "":
+                                cy, cx = 0, 0
+                        elif command == "m":
+                            parse_sgr(param_str)
+                            current_sgr = state_to_sgr()
+                        elif command == "K":  # Erase in line
+                            p = int(param_str) if param_str else 0
+                            start_c = cx if p == 0 else 0
+                            end_c = width if p in (0, 2) else cx + 1
+                            for c in range(max(0, start_c), min(width, end_c)):
+                                if 0 <= cy < height:
+                                    grid_char[cy][c] = " "
+                                    grid_sgr[cy][c] = current_sgr
+                        elif command == "J":  # Clear screen
+                            if param_str == "2":
+                                for r in range(height):
+                                    for c in range(width):
+                                        grid_char[r][c] = " "
+                                        grid_sgr[r][c] = current_sgr
                 else:
-                    # Not a CSI sequence, just an isolated escape character. Bundle it.
-                    current_ansi += char
                     i += 1
-
-            elif char in ("\n", "\r"):
-                seal_last_run()
-                if char == "\n":
-                    cy += 1
+            elif char == "\n":
+                cy += 1
                 cx = 0
                 i += 1
-
+            elif char == "\r":
+                cx = 0
+                i += 1
+            elif char == "\b":
+                cx = max(0, cx - 1)
+                i += 1
+            elif char == "\t":
+                cx = (cx + 8) & ~7
+                i += 1
             else:
-                # It's a standard character.
-                # Place it in the grid with whatever ANSI string is pending.
-                if 0 <= cy < height and 0 <= cx < width:
-                    grid[cy][cx] = current_ansi + char
-                    last_y, last_x = cy, cx
+                # Handle wide characters (e.g., CJK) taking 2 columns
+                w = 2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
 
-                current_ansi = (
-                    ""  # Cleared, so subsequent chars in this run get nothing
-                )
-                cx += 1
+                if 0 <= cy < height and 0 <= cx < width:
+                    grid_char[cy][cx] = char
+                    grid_sgr[cy][cx] = current_sgr
+                    # Reserve the extra cell so layouts don't misalign
+                    if w == 2 and cx + 1 < width:
+                        grid_char[cy][cx + 1] = ""
+                        grid_sgr[cy][cx + 1] = current_sgr
+
+                cx += w
+                if cx >= width:
+                    cx = 0
+                    cy += 1
                 i += 1
 
-        # Seal the final run in the sequence
-        seal_last_run()
+        # Serialize back into strings
+        output_lines = []
+        for r in range(height):
+            # Right-strip purely empty cells to prevent terminal wrap-around SGR bleeding
+            max_c = width - 1
+            while max_c >= 0:
+                if grid_char[r][max_c] != " " or grid_sgr[r][max_c] != "0":
+                    break
+                max_c -= 1
 
-        # Join the grid into a single string
-        return "\n".join("".join(row) for row in grid)
+            line_parts = []
+            last_sgr = None
+            for c in range(max_c + 1):
+                ch = grid_char[r][c]
+                sgr = grid_sgr[r][c]
+
+                if sgr != last_sgr:
+                    line_parts.append(f"\033[{sgr}m")
+                    last_sgr = sgr
+                line_parts.append(ch)
+
+            # Hard reset format before the line ends to guarantee safety
+            if last_sgr is not None and last_sgr != "0":
+                line_parts.append("\033[0m")
+
+            output_lines.append("".join(line_parts))
+
+        return "\n".join(output_lines)
