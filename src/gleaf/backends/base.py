@@ -255,23 +255,28 @@ class BaseCanvas:
     def render_ansi_sequence(
         self, sequence: str | bytes, width: int, height: int
     ) -> str:
-        """Parses an ANSI escape sequence (cursor positioning, newlines, text)
-        and reconstructs it into a plain text string bounded within a width x height rectangle.
+        """Takes the raw ANSI string/bytes flushed by render(), parses its
+        absolute cursor positions and SGR colors, crops it to the specified
+        width and height rectangle, and returns a clean ANSI-formatted string.
 
         Edge cases handled:
-        - 1-indexed to 0-indexed terminal coordinate translation (\033[y;xH).
-        - Out-of-bounds clamping and automatic line wrapping.
-        - Decodes bytes streams automatically.
-        - Malformed ANSI escape sequences.
+        - Automatically decodes byte streams.
+        - 1-indexed to 0-indexed terminal coordinate conversion (\033[y;xH).
+        - Strict clipping: drops any characters or coordinates falling outside
+          the target width/height rectangle.
+        - SGR style and color state tracking per cell with optimized output flushing.
+        - Malformed escape sequences and implicit cursor wraps.
         """
         if isinstance(sequence, bytes):
             sequence = sequence.decode("utf-8", errors="ignore")
 
-        # Initialize a grid filled with spaces
-        grid = [[" " for _ in range(width)] for _ in range(height)]
+        # Initialize virtual grids for characters and their respective SGR styles
+        grid_char = [[" " for _ in range(width)] for _ in range(height)]
+        grid_sgr = [["0" for _ in range(width)] for _ in range(height)]
 
-        cx = 0
-        cy = 0
+        current_sgr = "0"
+        cy, cx = 0, 0
+
         i = 0
         n = len(sequence)
 
@@ -279,7 +284,6 @@ class BaseCanvas:
             char = sequence[i]
 
             if char == "\033":
-                # Check for CSI escape sequence
                 if i + 1 < n and sequence[i + 1] == "[":
                     i += 2
                     param_str = ""
@@ -291,18 +295,20 @@ class BaseCanvas:
                         command = sequence[i]
                         i += 1
 
-                        # Cursor Position (CUP): \033[y;xH or \033[y;xf
+                        # Handle Cursor Position (CUP): \033[y;xH or \033[y;xf
                         if command in ("H", "f"):
                             parts = param_str.split(";")
                             if len(parts) >= 2:
                                 try:
-                                    # Terminal coordinates are 1-based; convert to 0-based
                                     cy = int(parts[0]) - 1 if parts[0] else 0
                                     cx = int(parts[1]) - 1 if parts[1] else 0
                                 except ValueError:
                                     pass
                             elif len(parts) == 1 and parts[0] == "":
                                 cy, cx = 0, 0
+                        # Handle Select Graphic Rendition (SGR): \033[...m
+                        elif command == "m":
+                            current_sgr = param_str if param_str else "0"
                 else:
                     i += 1
             elif char == "\n":
@@ -313,15 +319,36 @@ class BaseCanvas:
                 cx = 0
                 i += 1
             else:
-                # Printable character: write if within target rectangle bounds
+                # Printable character: write only if strictly within the target rectangle bounds (cropping)
                 if 0 <= cy < height and 0 <= cx < width:
-                    grid[cy][cx] = char
+                    grid_char[cy][cx] = char
+                    grid_sgr[cy][cx] = current_sgr
 
                 cx += 1
-                # Auto-wrap to next row if exceeding width
                 if cx >= width:
                     cx = 0
                     cy += 1
                 i += 1
 
-        return "\n".join("".join(row) for row in grid)
+        # Re-serialize the cropped grid back into an optimized ANSI string
+        output_lines = []
+        for r in range(height):
+            line_parts = []
+            last_sgr = None
+            for c in range(width):
+                ch = grid_char[r][c]
+                sgr = grid_sgr[r][c]
+
+                # Only emit SGR escape code when the style/color changes
+                if sgr != last_sgr:
+                    line_parts.append(f"\033[{sgr}m")
+                    last_sgr = sgr
+                line_parts.append(ch)
+
+            # Reset formatting at the end of each line
+            if last_sgr is not None and last_sgr != "0":
+                line_parts.append("\033[0m")
+
+            output_lines.append("".join(line_parts))
+
+        return "\n".join(output_lines)
