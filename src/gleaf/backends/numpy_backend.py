@@ -1,16 +1,16 @@
 """High-Performance NumPy Backend with Vectorized Frame Buffering."""
 
-import sys
 import shutil
+import sys
+
 import numpy as np
-from typing import Optional, Tuple
 
 try:
     from ..caps import Modifiers, TerminalCaps
 except ImportError:
     from gleaf.caps import Modifiers, TerminalCaps
 
-from .base import BaseCanvas, UNSET
+from .base import UNSET, BaseCanvas
 
 try:
     import termios
@@ -20,14 +20,14 @@ except ImportError:
 
 
 class NumPyCanvas(BaseCanvas):
-    def __init__(self, width: Optional[int] = None, height: Optional[int] = None):
+    def __init__(self, width: int | None = None, height: int | None = None):
         w = width if width is not None else shutil.get_terminal_size().columns
         h = height if height is not None else shutil.get_terminal_size().lines
         super().__init__(w, h)
 
         self.caps = TerminalCaps()
         self._style_cache = {}
-        
+
         # --- Prebind capabilities to eliminate hasattr overhead in hot loops ---
         if hasattr(self.caps, "modifiers_to_sgr"):
             self._mod_func = self.caps.modifiers_to_sgr
@@ -37,15 +37,18 @@ class NumPyCanvas(BaseCanvas):
             self._mod_func = None
 
         self._fg_func = (
-            self.caps.sgr_fg if hasattr(self.caps, "sgr_fg")
+            self.caps.sgr_fg
+            if hasattr(self.caps, "sgr_fg")
             else (self.caps.fg_sgr if hasattr(self.caps, "fg_sgr") else None)
         )
         self._bg_func = (
-            self.caps.sgr_bg if hasattr(self.caps, "sgr_bg")
+            self.caps.sgr_bg
+            if hasattr(self.caps, "sgr_bg")
             else (self.caps.bg_sgr if hasattr(self.caps, "bg_sgr") else None)
         )
         self._ul_func = (
-            self.caps.sgr_ul if hasattr(self.caps, "sgr_ul")
+            self.caps.sgr_ul
+            if hasattr(self.caps, "sgr_ul")
             else (self.caps.ul_sgr if hasattr(self.caps, "ul_sgr") else None)
         )
 
@@ -97,19 +100,31 @@ class NumPyCanvas(BaseCanvas):
             return chr(self.b_char[y, x])
         return " "
 
-    def get_fg(self, x: int, y: int) -> Optional[Tuple[int, int, int]]:
+    def get_fg(self, x: int, y: int) -> tuple[int, int, int] | None:
         if 0 <= x < self.width and 0 <= y < self.height and self.b_has_fg[y, x]:
-            return (int(self.b_fg_r[y, x]), int(self.b_fg_g[y, x]), int(self.b_fg_b[y, x]))
+            return (
+                int(self.b_fg_r[y, x]),
+                int(self.b_fg_g[y, x]),
+                int(self.b_fg_b[y, x]),
+            )
         return None
 
-    def get_bg(self, x: int, y: int) -> Optional[Tuple[int, int, int]]:
+    def get_bg(self, x: int, y: int) -> tuple[int, int, int] | None:
         if 0 <= x < self.width and 0 <= y < self.height and self.b_has_bg[y, x]:
-            return (int(self.b_bg_r[y, x]), int(self.b_bg_g[y, x]), int(self.b_bg_b[y, x]))
+            return (
+                int(self.b_bg_r[y, x]),
+                int(self.b_bg_g[y, x]),
+                int(self.b_bg_b[y, x]),
+            )
         return None
 
-    def get_ul_fg(self, x: int, y: int) -> Optional[Tuple[int, int, int]]:
+    def get_ul_fg(self, x: int, y: int) -> tuple[int, int, int] | None:
         if 0 <= x < self.width and 0 <= y < self.height and self.b_has_ul[y, x]:
-            return (int(self.b_ul_r[y, x]), int(self.b_ul_g[y, x]), int(self.b_ul_b[y, x]))
+            return (
+                int(self.b_ul_r[y, x]),
+                int(self.b_ul_g[y, x]),
+                int(self.b_ul_b[y, x]),
+            )
         return None
 
     def get_style(self, x: int, y: int) -> int:
@@ -118,7 +133,7 @@ class NumPyCanvas(BaseCanvas):
         return 0
 
     # --- Vectorized Region / Zone Inspection Overrides ---
-    def _clamp_region(self, x: int, y: int, w: int, h: int) -> Tuple[slice, slice]:
+    def _clamp_region(self, x: int, y: int, w: int, h: int) -> tuple[slice, slice]:
         x_start = max(0, x)
         x_end = min(self.width, x + w)
         y_start = max(0, y)
@@ -132,10 +147,14 @@ class NumPyCanvas(BaseCanvas):
     def get_region_fg(self, x: int, y: int, w: int, h: int) -> np.ndarray:
         s_y, s_x = self._clamp_region(x, y, w, h)
         sub_has = self.b_has_fg[s_y, s_x]
-        sub_r, sub_g, sub_b = self.b_fg_r[s_y, s_x], self.b_fg_g[s_y, s_x], self.b_fg_b[s_y, s_x]
+        sub_r, sub_g, sub_b = (
+            self.b_fg_r[s_y, s_x],
+            self.b_fg_g[s_y, s_x],
+            self.b_fg_b[s_y, s_x],
+        )
 
         res = np.empty(sub_has.shape, dtype=object)
-        mask = (sub_has == 1)
+        mask = sub_has == 1
         res[~mask] = None
         if np.any(mask):
             rgb_tuples = list(zip(sub_r[mask], sub_g[mask], sub_b[mask]))
@@ -145,10 +164,14 @@ class NumPyCanvas(BaseCanvas):
     def get_region_bg(self, x: int, y: int, w: int, h: int) -> np.ndarray:
         s_y, s_x = self._clamp_region(x, y, w, h)
         sub_has = self.b_has_bg[s_y, s_x]
-        sub_r, sub_g, sub_b = self.b_bg_r[s_y, s_x], self.b_bg_g[s_y, s_x], self.b_bg_b[s_y, s_x]
+        sub_r, sub_g, sub_b = (
+            self.b_bg_r[s_y, s_x],
+            self.b_bg_g[s_y, s_x],
+            self.b_bg_b[s_y, s_x],
+        )
 
         res = np.empty(sub_has.shape, dtype=object)
-        mask = (sub_has == 1)
+        mask = sub_has == 1
         res[~mask] = None
         if np.any(mask):
             rgb_tuples = list(zip(sub_r[mask], sub_g[mask], sub_b[mask]))
@@ -180,7 +203,9 @@ class NumPyCanvas(BaseCanvas):
         self.b_has_ul.fill(0)
         self.b_style.fill(0)
 
-    def put_str(self, x: int, y: int, text: str, fg=UNSET, bg=UNSET, style=UNSET, ul_fg=UNSET) -> None:
+    def put_str(
+        self, x: int, y: int, text: str, fg=UNSET, bg=UNSET, style=UNSET, ul_fg=UNSET
+    ) -> None:
         if y < 0 or y >= self.height or not text:
             return
 
@@ -193,7 +218,9 @@ class NumPyCanvas(BaseCanvas):
         text_offset_end = text_offset_start + (x_end - x_start)
         target_text = text[text_offset_start:text_offset_end]
 
-        char_ords = np.fromiter((ord(c) for c in target_text), dtype=np.uint32, count=len(target_text))
+        char_ords = np.fromiter(
+            (ord(c) for c in target_text), dtype=np.uint32, count=len(target_text)
+        )
         self.b_char[y, x_start:x_end] = char_ords
 
         if fg is not UNSET:
@@ -226,7 +253,17 @@ class NumPyCanvas(BaseCanvas):
         if style is not UNSET:
             self.b_style[y, x_start:x_end] = 0 if style is None else style
 
-    def edit_region_colors(self, x: int, y: int, w: int, h: int, fg=UNSET, bg=UNSET, style=UNSET, ul_fg=UNSET) -> None:
+    def edit_region_colors(
+        self,
+        x: int,
+        y: int,
+        w: int,
+        h: int,
+        fg=UNSET,
+        bg=UNSET,
+        style=UNSET,
+        ul_fg=UNSET,
+    ) -> None:
         x_start = max(0, x)
         x_end = min(self.width, x + w)
         y_start = max(0, y)
@@ -325,16 +362,37 @@ class NumPyCanvas(BaseCanvas):
             return self._ul_func(r, g, b)
         return f"58;2;{r};{g};{b}"
 
-    def render(self) -> None:
+    def render(self, compute_only=False):
         diff = (
-            (self.b_char != self.f_char) |
-            (self.b_style != self.f_style) |
-            (self.b_has_fg != self.f_has_fg) |
-            (self.b_has_bg != self.f_has_bg) |
-            (self.b_has_ul != self.f_has_ul) |
-            ((self.b_has_fg == 1) & ((self.b_fg_r != self.f_fg_r) | (self.b_fg_g != self.f_fg_g) | (self.b_fg_b != self.f_fg_b))) |
-            ((self.b_has_bg == 1) & ((self.b_bg_r != self.f_bg_r) | (self.b_bg_g != self.f_bg_g) | (self.b_bg_b != self.f_bg_b))) |
-            ((self.b_has_ul == 1) & ((self.b_ul_r != self.f_ul_r) | (self.b_ul_g != self.f_ul_g) | (self.b_ul_b != self.f_ul_b)))
+            (self.b_char != self.f_char)
+            | (self.b_style != self.f_style)
+            | (self.b_has_fg != self.f_has_fg)
+            | (self.b_has_bg != self.f_has_bg)
+            | (self.b_has_ul != self.f_has_ul)
+            | (
+                (self.b_has_fg == 1)
+                & (
+                    (self.b_fg_r != self.f_fg_r)
+                    | (self.b_fg_g != self.f_fg_g)
+                    | (self.b_fg_b != self.f_fg_b)
+                )
+            )
+            | (
+                (self.b_has_bg == 1)
+                & (
+                    (self.b_bg_r != self.f_bg_r)
+                    | (self.b_bg_g != self.f_bg_g)
+                    | (self.b_bg_b != self.f_bg_b)
+                )
+            )
+            | (
+                (self.b_has_ul == 1)
+                & (
+                    (self.b_ul_r != self.f_ul_r)
+                    | (self.b_ul_g != self.f_ul_g)
+                    | (self.b_ul_b != self.f_ul_b)
+                )
+            )
         )
 
         if not np.any(diff):
@@ -349,12 +407,27 @@ class NumPyCanvas(BaseCanvas):
 
         while i < n:
             y, x = y_indices[i], x_indices[i]
-            app(f"\033[{y+1};{x+1}H")
+            app(f"\033[{y + 1};{x + 1}H")
 
             st = self.b_style[y, x]
-            has_fg, fg_r, fg_g, fg_b = self.b_has_fg[y, x], self.b_fg_r[y, x], self.b_fg_g[y, x], self.b_fg_b[y, x]
-            has_bg, bg_r, bg_g, bg_b = self.b_has_bg[y, x], self.b_bg_r[y, x], self.b_bg_g[y, x], self.b_bg_b[y, x]
-            has_ul, ul_r, ul_g, ul_b = self.b_has_ul[y, x], self.b_ul_r[y, x], self.b_ul_g[y, x], self.b_ul_b[y, x]
+            has_fg, fg_r, fg_g, fg_b = (
+                self.b_has_fg[y, x],
+                self.b_fg_r[y, x],
+                self.b_fg_g[y, x],
+                self.b_fg_b[y, x],
+            )
+            has_bg, bg_r, bg_g, bg_b = (
+                self.b_has_bg[y, x],
+                self.b_bg_r[y, x],
+                self.b_bg_g[y, x],
+                self.b_bg_b[y, x],
+            )
+            has_ul, ul_r, ul_g, ul_b = (
+                self.b_has_ul[y, x],
+                self.b_ul_r[y, x],
+                self.b_ul_g[y, x],
+                self.b_ul_b[y, x],
+            )
 
             sgr_codes = ["0"]
             if st > 0:
@@ -379,13 +452,36 @@ class NumPyCanvas(BaseCanvas):
                 i += 1
                 if i < n and y_indices[i] == y and x_indices[i] == x + 1:
                     nx = x_indices[i]
-                    if (self.b_style[y, nx] != st or
-                        self.b_has_fg[y, nx] != has_fg or
-                        self.b_has_bg[y, nx] != has_bg or
-                        self.b_has_ul[y, nx] != has_ul or
-                        (has_fg and (self.b_fg_r[y, nx] != fg_r or self.b_fg_g[y, nx] != fg_g or self.b_fg_b[y, nx] != fg_b)) or
-                        (has_bg and (self.b_bg_r[y, nx] != bg_r or self.b_bg_g[y, nx] != bg_g or self.b_bg_b[y, nx] != bg_b)) or
-                        (has_ul and (self.b_ul_r[y, nx] != ul_r or self.b_ul_g[y, nx] != ul_g or self.b_ul_b[y, nx] != ul_b))):
+                    if (
+                        self.b_style[y, nx] != st
+                        or self.b_has_fg[y, nx] != has_fg
+                        or self.b_has_bg[y, nx] != has_bg
+                        or self.b_has_ul[y, nx] != has_ul
+                        or (
+                            has_fg
+                            and (
+                                self.b_fg_r[y, nx] != fg_r
+                                or self.b_fg_g[y, nx] != fg_g
+                                or self.b_fg_b[y, nx] != fg_b
+                            )
+                        )
+                        or (
+                            has_bg
+                            and (
+                                self.b_bg_r[y, nx] != bg_r
+                                or self.b_bg_g[y, nx] != bg_g
+                                or self.b_bg_b[y, nx] != bg_b
+                            )
+                        )
+                        or (
+                            has_ul
+                            and (
+                                self.b_ul_r[y, nx] != ul_r
+                                or self.b_ul_g[y, nx] != ul_g
+                                or self.b_ul_b[y, nx] != ul_b
+                            )
+                        )
+                    ):
                         break
                     x = nx
 
@@ -406,6 +502,9 @@ class NumPyCanvas(BaseCanvas):
         self.f_ul_g[diff] = self.b_ul_g[diff]
         self.f_ul_b[diff] = self.b_ul_b[diff]
         self.f_style[diff] = self.b_style[diff]
+
+        if compute_only:
+            return "".join(buf)
 
         if buf:
             sys.stdout.write("".join(buf))

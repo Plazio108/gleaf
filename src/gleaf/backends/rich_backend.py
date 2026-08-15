@@ -219,7 +219,7 @@ class RichCanvas(BaseCanvas):
                 if ul_fg is not UNSET:
                     cell["ul_fg"] = ul_fg
 
-    def render(self) -> None:
+    def render(self, compute_only=False):
         buf = []
         app = buf.append
 
@@ -260,6 +260,9 @@ class RichCanvas(BaseCanvas):
                     app(style_obj.render(text))
                 else:
                     app(text)
+
+        if compute_only:
+            return "".join(buf)
 
         if buf:
             self.console.file.write("".join(buf))

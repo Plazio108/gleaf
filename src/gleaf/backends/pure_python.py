@@ -171,7 +171,7 @@ class PurePythonCanvas(BaseCanvas):
                 elif mode == "set":
                     cell["style"] = style
 
-    def render(self):
+    def render(self, compute_only=False):
         out = []
         app = out.append
 
@@ -239,6 +239,9 @@ class PurePythonCanvas(BaseCanvas):
         self._current_ul_fg = cur_ul_fg
         self._cursor_x = cx
         self._cursor_y = cy
+
+        if compute_only:
+            return "".join(out)
 
         if out:
             sys.__stdout__.write("".join(out))

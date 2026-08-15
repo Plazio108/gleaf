@@ -194,7 +194,7 @@ class BaseCanvas:
                     elif mode == "toggle":
                         cell.style ^= style
 
-    def render(self):
+    def render(self, compute_only=False):
         raise NotImplementedError
 
     # def enter_alternate_screen(self):
@@ -251,3 +251,77 @@ class BaseCanvas:
                 )
             except (termios.error, ValueError, AttributeError):
                 pass
+
+    def render_ansi_sequence(
+        self, sequence: str | bytes, width: int, height: int
+    ) -> str:
+        """Parses an ANSI escape sequence (cursor positioning, newlines, text)
+        and reconstructs it into a plain text string bounded within a width x height rectangle.
+
+        Edge cases handled:
+        - 1-indexed to 0-indexed terminal coordinate translation (\033[y;xH).
+        - Out-of-bounds clamping and automatic line wrapping.
+        - Decodes bytes streams automatically.
+        - Malformed ANSI escape sequences.
+        """
+        if isinstance(sequence, bytes):
+            sequence = sequence.decode("utf-8", errors="ignore")
+
+        # Initialize a grid filled with spaces
+        grid = [[" " for _ in range(width)] for _ in range(height)]
+
+        cx = 0
+        cy = 0
+        i = 0
+        n = len(sequence)
+
+        while i < n:
+            char = sequence[i]
+
+            if char == "\033":
+                # Check for CSI escape sequence
+                if i + 1 < n and sequence[i + 1] == "[":
+                    i += 2
+                    param_str = ""
+                    while i < n and not (sequence[i].isalpha() or sequence[i] == "~"):
+                        param_str += sequence[i]
+                        i += 1
+
+                    if i < n:
+                        command = sequence[i]
+                        i += 1
+
+                        # Cursor Position (CUP): \033[y;xH or \033[y;xf
+                        if command in ("H", "f"):
+                            parts = param_str.split(";")
+                            if len(parts) >= 2:
+                                try:
+                                    # Terminal coordinates are 1-based; convert to 0-based
+                                    cy = int(parts[0]) - 1 if parts[0] else 0
+                                    cx = int(parts[1]) - 1 if parts[1] else 0
+                                except ValueError:
+                                    pass
+                            elif len(parts) == 1 and parts[0] == "":
+                                cy, cx = 0, 0
+                else:
+                    i += 1
+            elif char == "\n":
+                cy += 1
+                cx = 0
+                i += 1
+            elif char == "\r":
+                cx = 0
+                i += 1
+            else:
+                # Printable character: write if within target rectangle bounds
+                if 0 <= cy < height and 0 <= cx < width:
+                    grid[cy][cx] = char
+
+                cx += 1
+                # Auto-wrap to next row if exceeding width
+                if cx >= width:
+                    cx = 0
+                    cy += 1
+                i += 1
+
+        return "\n".join("".join(row) for row in grid)
