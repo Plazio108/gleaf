@@ -4,7 +4,6 @@ import re
 import shutil
 import sys
 import textwrap
-import unicodedata
 
 from ..caps import TerminalCaps
 
@@ -100,7 +99,7 @@ class BaseCanvas:
         raise NotImplementedError
 
     def put_str(
-        self, x: int, y: int, text: str, fg=UNSET, bg=UNSET, style=UNSET, ul_fg=None
+        self, x: int, y: int, text: str, fg=UNSET, bg=UNSET, style=UNSET, ul_fg=UNSET
     ):
         """Draws string at (x,y). Unpassed parameters preserve existing cell properties."""
         raise NotImplementedError
@@ -115,7 +114,7 @@ class BaseCanvas:
         fg=UNSET,
         bg=UNSET,
         style=UNSET,
-        ul_fg=None,
+        ul_fg=UNSET,
         wrap: bool = True,
     ) -> int:
         """
@@ -150,22 +149,10 @@ class BaseCanvas:
         return len(lines_to_draw)
 
     def edit_region_colors(
-        self, x: int, y: int, w: int, h: int, fg=UNSET, bg=UNSET, ul_fg=None
+        self, x: int, y: int, w: int, h: int, fg=UNSET, bg=UNSET, ul_fg=UNSET
     ):
         """Edits foreground and/or background colors in a bounding box without affecting text or styles."""
-        x1, x2 = max(0, x), min(self.width, x + w)
-        y1, y2 = max(0, y), min(self.height, y + h)
-
-        if hasattr(self, "_buffer"):
-            for py in range(y1, y2):
-                for px in range(x1, x2):
-                    cell = self._buffer[py][px]
-                    if fg is not UNSET:
-                        cell.fg = fg
-                    if bg is not UNSET:
-                        cell.bg = bg
-                    if ul_fg is not None:
-                        cell.ul_fg = ul_fg
+        raise NotImplementedError
 
     def edit_region_style(
         self,
@@ -180,21 +167,7 @@ class BaseCanvas:
         Edits style flags in a bounding box without modifying text or colors.
         mode options: 'add', 'remove', 'set', 'toggle'
         """
-        x1, x2 = max(0, x), min(self.width, x + w)
-        y1, y2 = max(0, y), min(self.height, y + h)
-
-        if hasattr(self, "_buffer"):
-            for py in range(y1, y2):
-                for px in range(x1, x2):
-                    cell = self._buffer[py][px]
-                    if mode in ("add", "enable"):
-                        cell.style |= style
-                    elif mode in ("remove", "disable"):
-                        cell.style &= ~style
-                    elif mode in ("set", "replace"):
-                        cell.style = style
-                    elif mode == "toggle":
-                        cell.style ^= style
+        raise NotImplementedError
 
     def render(self, compute_only=False):
         raise NotImplementedError

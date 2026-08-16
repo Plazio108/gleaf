@@ -3,7 +3,7 @@
 import sys
 
 from ..caps import RGB, Modifiers, TerminalCaps
-from .base import BaseCanvas
+from .base import UNSET, BaseCanvas
 
 try:
     import termios
@@ -120,10 +120,10 @@ class PurePythonCanvas(BaseCanvas):
         x: int,
         y: int,
         text: str,
-        fg=None,
-        bg=None,
-        style=Modifiers.NORMAL,
-        ul_fg=None,
+        fg=UNSET,
+        bg=UNSET,
+        style=UNSET,
+        ul_fg=UNSET,
     ):
         if y < 0 or y >= self.height:
             return
@@ -133,26 +133,26 @@ class PurePythonCanvas(BaseCanvas):
             if 0 <= cx < self.width:
                 cell = self.grid[y][cx]
                 cell["char"] = char
-                if fg is not None:
+                if fg is not UNSET:
                     cell["fg"] = fg
-                if bg is not None:
+                if bg is not UNSET:
                     cell["bg"] = bg
-                if style is not None:
+                if style is not UNSET:
                     cell["style"] = style
-                if ul_fg is not None:
+                if ul_fg is not UNSET:
                     cell["ul_fg"] = ul_fg
 
     def edit_region_colors(
-        self, x: int, y: int, w: int, h: int, fg=None, bg=None, ul_fg=None
+        self, x: int, y: int, w: int, h: int, fg=UNSET, bg=UNSET, ul_fg=UNSET
     ):
         for cy in range(max(0, y), min(self.height, y + h)):
             for cx in range(max(0, x), min(self.width, x + w)):
                 cell = self.grid[cy][cx]
-                if fg is not None:
+                if fg is not UNSET:
                     cell["fg"] = fg
-                if bg is not None:
+                if bg is not UNSET:
                     cell["bg"] = bg
-                if ul_fg is not None:
+                if ul_fg is not UNSET:
                     cell["ul_fg"] = ul_fg
 
     def edit_region_style(
