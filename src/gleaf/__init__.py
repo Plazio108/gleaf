@@ -3,7 +3,7 @@ gleaf - Adaptive High-Performance Terminal Canvas.
 Supports numba, numpy, curses, rich, and pure python fallbacks.
 """
 
-from .backends.base import BaseCanvas, BaseTexture
+from .backends.base import BaseCanvas, BaseTexture, UNSET
 from .backends.pure_python import PurePythonCanvas
 from .caps import TerminalCaps
 from .styles import Modifiers, Style
@@ -97,6 +97,7 @@ def TerminalTexture(
 
 
 __all__ = [
+    "UNSET",
     "BaseCanvas",
     "BaseTexture",
     "Modifiers",
