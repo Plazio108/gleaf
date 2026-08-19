@@ -209,6 +209,32 @@ class NumPyCanvas(BaseCanvas):
         if y < 0 or y >= self.height or not text:
             return
 
+        # --- FAST PATH: Single-character writes (Matrix / TUI text drawing) ---
+        if len(text) == 1:
+            if 0 <= x < self.width:
+                self.b_char[y, x] = ord(text)
+                if fg is not UNSET:
+                    if fg is None:
+                        self.b_has_fg[y, x] = 0
+                    else:
+                        self.b_has_fg[y, x] = 1
+                        self.b_fg_r[y, x], self.b_fg_g[y, x], self.b_fg_b[y, x] = fg
+                if bg is not UNSET:
+                    if bg is None:
+                        self.b_has_bg[y, x] = 0
+                    else:
+                        self.b_has_bg[y, x] = 1
+                        self.b_bg_r[y, x], self.b_bg_g[y, x], self.b_bg_b[y, x] = bg
+                if ul_fg is not UNSET:
+                    if ul_fg is None:
+                        self.b_has_ul[y, x] = 0
+                    else:
+                        self.b_has_ul[y, x] = 1
+                        self.b_ul_r[y, x], self.b_ul_g[y, x], self.b_ul_b[y, x] = ul_fg
+                if style is not UNSET:
+                    self.b_style[y, x] = 0 if style is None else style
+            return
+
         x_start = max(0, x)
         x_end = min(self.width, x + len(text))
         if x_start >= x_end:
@@ -362,7 +388,156 @@ class NumPyCanvas(BaseCanvas):
             return self._ul_func(r, g, b)
         return f"58;2;{r};{g};{b}"
 
+    # def render(self, compute_only=False):
+    #     diff = (
+    #         (self.b_char != self.f_char)
+    #         | (self.b_style != self.f_style)
+    #         | (self.b_has_fg != self.f_has_fg)
+    #         | (self.b_has_bg != self.f_has_bg)
+    #         | (self.b_has_ul != self.f_has_ul)
+    #         | (
+    #             (self.b_has_fg == 1)
+    #             & (
+    #                 (self.b_fg_r != self.f_fg_r)
+    #                 | (self.b_fg_g != self.f_fg_g)
+    #                 | (self.b_fg_b != self.f_fg_b)
+    #             )
+    #         )
+    #         | (
+    #             (self.b_has_bg == 1)
+    #             & (
+    #                 (self.b_bg_r != self.f_bg_r)
+    #                 | (self.b_bg_g != self.f_bg_g)
+    #                 | (self.b_bg_b != self.f_bg_b)
+    #             )
+    #         )
+    #         | (
+    #             (self.b_has_ul == 1)
+    #             & (
+    #                 (self.b_ul_r != self.f_ul_r)
+    #                 | (self.b_ul_g != self.f_ul_g)
+    #                 | (self.b_ul_b != self.f_ul_b)
+    #             )
+    #         )
+    #     )
+
+    #     if not np.any(diff):
+    #         return
+
+    #     y_indices, x_indices = np.where(diff)
+    #     buf = []
+    #     app = buf.append
+
+    #     i = 0
+    #     n = len(y_indices)
+
+    #     while i < n:
+    #         y, x = y_indices[i], x_indices[i]
+    #         app(f"\033[{y + 1};{x + 1}H")
+
+    #         st = self.b_style[y, x]
+    #         has_fg, fg_r, fg_g, fg_b = (
+    #             self.b_has_fg[y, x],
+    #             self.b_fg_r[y, x],
+    #             self.b_fg_g[y, x],
+    #             self.b_fg_b[y, x],
+    #         )
+    #         has_bg, bg_r, bg_g, bg_b = (
+    #             self.b_has_bg[y, x],
+    #             self.b_bg_r[y, x],
+    #             self.b_bg_g[y, x],
+    #             self.b_bg_b[y, x],
+    #         )
+    #         has_ul, ul_r, ul_g, ul_b = (
+    #             self.b_has_ul[y, x],
+    #             self.b_ul_r[y, x],
+    #             self.b_ul_g[y, x],
+    #             self.b_ul_b[y, x],
+    #         )
+
+    #         sgr_codes = ["0"]
+    #         if st > 0:
+    #             sgr = self._style_to_sgr(st)
+    #             if sgr:
+    #                 sgr_codes.append(sgr)
+
+    #         if has_fg:
+    #             sgr_codes.append(self._fg_sgr(fg_r, fg_g, fg_b))
+
+    #         if has_bg:
+    #             sgr_codes.append(self._bg_sgr(bg_r, bg_g, bg_b))
+
+    #         if has_ul:
+    #             sgr_codes.append(self._ul_sgr(ul_r, ul_g, ul_b))
+
+    #         app(f"\033[{';'.join(sgr_codes)}m")
+
+    #         chars = []
+    #         while i < n and y_indices[i] == y and x_indices[i] == x:
+    #             chars.append(chr(self.b_char[y, x]))
+    #             i += 1
+    #             if i < n and y_indices[i] == y and x_indices[i] == x + 1:
+    #                 nx = x_indices[i]
+    #                 if (
+    #                     self.b_style[y, nx] != st
+    #                     or self.b_has_fg[y, nx] != has_fg
+    #                     or self.b_has_bg[y, nx] != has_bg
+    #                     or self.b_has_ul[y, nx] != has_ul
+    #                     or (
+    #                         has_fg
+    #                         and (
+    #                             self.b_fg_r[y, nx] != fg_r
+    #                             or self.b_fg_g[y, nx] != fg_g
+    #                             or self.b_fg_b[y, nx] != fg_b
+    #                         )
+    #                     )
+    #                     or (
+    #                         has_bg
+    #                         and (
+    #                             self.b_bg_r[y, nx] != bg_r
+    #                             or self.b_bg_g[y, nx] != bg_g
+    #                             or self.b_bg_b[y, nx] != bg_b
+    #                         )
+    #                     )
+    #                     or (
+    #                         has_ul
+    #                         and (
+    #                             self.b_ul_r[y, nx] != ul_r
+    #                             or self.b_ul_g[y, nx] != ul_g
+    #                             or self.b_ul_b[y, nx] != ul_b
+    #                         )
+    #                     )
+    #                 ):
+    #                     break
+    #                 x = nx
+
+    #         app("".join(chars))
+
+    #     # Synchronize front buffer
+    #     self.f_char[diff] = self.b_char[diff]
+    #     self.f_has_fg[diff] = self.b_has_fg[diff]
+    #     self.f_fg_r[diff] = self.b_fg_r[diff]
+    #     self.f_fg_g[diff] = self.b_fg_g[diff]
+    #     self.f_fg_b[diff] = self.b_fg_b[diff]
+    #     self.f_has_bg[diff] = self.b_has_bg[diff]
+    #     self.f_bg_r[diff] = self.b_bg_r[diff]
+    #     self.f_bg_g[diff] = self.b_bg_g[diff]
+    #     self.f_bg_b[diff] = self.b_bg_b[diff]
+    #     self.f_has_ul[diff] = self.b_has_ul[diff]
+    #     self.f_ul_r[diff] = self.b_ul_r[diff]
+    #     self.f_ul_g[diff] = self.b_ul_g[diff]
+    #     self.f_ul_b[diff] = self.b_ul_b[diff]
+    #     self.f_style[diff] = self.b_style[diff]
+
+    #     if compute_only:
+    #         return "".join(buf)
+
+    #     if buf:
+    #         sys.stdout.write("".join(buf))
+    #         sys.stdout.flush()
+
     def render(self, compute_only=False):
+        # 1. Vectorized Diff (Your existing fast logic)
         diff = (
             (self.b_char != self.f_char)
             | (self.b_style != self.f_style)
@@ -398,96 +573,91 @@ class NumPyCanvas(BaseCanvas):
         if not np.any(diff):
             return
 
+        # 2. Vectorized Extraction
+        # Pull ALL changed data into 1D arrays instantly, then convert to fast native Python lists
         y_indices, x_indices = np.where(diff)
+
+        c_vals = self.b_char[diff].tolist()
+        s_vals = self.b_style[diff].tolist()
+
+        hf_vals = self.b_has_fg[diff].tolist()
+        fr_vals, fg_vals, fb_vals = (
+            self.b_fg_r[diff].tolist(),
+            self.b_fg_g[diff].tolist(),
+            self.b_fg_b[diff].tolist(),
+        )
+
+        hb_vals = self.b_has_bg[diff].tolist()
+        br_vals, bg_vals, bb_vals = (
+            self.b_bg_r[diff].tolist(),
+            self.b_bg_g[diff].tolist(),
+            self.b_bg_b[diff].tolist(),
+        )
+
+        hu_vals = self.b_has_ul[diff].tolist()
+        ur_vals, ug_vals, ub_vals = (
+            self.b_ul_r[diff].tolist(),
+            self.b_ul_g[diff].tolist(),
+            self.b_ul_b[diff].tolist(),
+        )
+
         buf = []
         app = buf.append
 
-        i = 0
-        n = len(y_indices)
+        cur_y, cur_x = -1, -1
+        cur_state = None
 
-        while i < n:
-            y, x = y_indices[i], x_indices[i]
-            app(f"\033[{y + 1};{x + 1}H")
+        # 3. The Fast Loop
+        # zip() runs at C-speed. We are now dealing exclusively with native Python integers.
+        iterator = zip(
+            y_indices,
+            x_indices,
+            c_vals,
+            s_vals,
+            hf_vals,
+            fr_vals,
+            fg_vals,
+            fb_vals,
+            hb_vals,
+            br_vals,
+            bg_vals,
+            bb_vals,
+            hu_vals,
+            ur_vals,
+            ug_vals,
+            ub_vals,
+        )
 
-            st = self.b_style[y, x]
-            has_fg, fg_r, fg_g, fg_b = (
-                self.b_has_fg[y, x],
-                self.b_fg_r[y, x],
-                self.b_fg_g[y, x],
-                self.b_fg_b[y, x],
-            )
-            has_bg, bg_r, bg_g, bg_b = (
-                self.b_has_bg[y, x],
-                self.b_bg_r[y, x],
-                self.b_bg_g[y, x],
-                self.b_bg_b[y, x],
-            )
-            has_ul, ul_r, ul_g, ul_b = (
-                self.b_has_ul[y, x],
-                self.b_ul_r[y, x],
-                self.b_ul_g[y, x],
-                self.b_ul_b[y, x],
-            )
+        for y, x, c, s, hf, fr, fg, fb, hb, br, bg, bb, hu, ur, ug, ub in iterator:
+            # We bundle all style data into a tuple.
+            # Python compares tuples instantly, replacing your massive 14-check if statement.
+            state = (s, hf, fr, fg, fb, hb, br, bg, bb, hu, ur, ug, ub)
 
-            sgr_codes = ["0"]
-            if st > 0:
-                sgr = self._style_to_sgr(st)
-                if sgr:
-                    sgr_codes.append(sgr)
+            # Move cursor only if we aren't continuing from the exact previous cell
+            if y != cur_y or x != cur_x + 1:
+                app(f"\033[{y + 1};{x + 1}H")
 
-            if has_fg:
-                sgr_codes.append(self._fg_sgr(fg_r, fg_g, fg_b))
+            # Apply ANSI sequences only if the styling actually changed
+            if state != cur_state:
+                sgr_codes = ["0"]
+                if s > 0:
+                    sgr = self._style_to_sgr(s)
+                    if sgr:
+                        sgr_codes.append(sgr)
+                if hf:
+                    sgr_codes.append(self._fg_sgr(fr, fg, fb))
+                if hb:
+                    sgr_codes.append(self._bg_sgr(br, bg, bb))
+                if hu:
+                    sgr_codes.append(self._ul_sgr(ur, ug, ub))
 
-            if has_bg:
-                sgr_codes.append(self._bg_sgr(bg_r, bg_g, bg_b))
+                app(f"\033[{';'.join(sgr_codes)}m")
+                cur_state = state
 
-            if has_ul:
-                sgr_codes.append(self._ul_sgr(ul_r, ul_g, ul_b))
+            app(chr(c))
+            cur_y, cur_x = y, x
 
-            app(f"\033[{';'.join(sgr_codes)}m")
-
-            chars = []
-            while i < n and y_indices[i] == y and x_indices[i] == x:
-                chars.append(chr(self.b_char[y, x]))
-                i += 1
-                if i < n and y_indices[i] == y and x_indices[i] == x + 1:
-                    nx = x_indices[i]
-                    if (
-                        self.b_style[y, nx] != st
-                        or self.b_has_fg[y, nx] != has_fg
-                        or self.b_has_bg[y, nx] != has_bg
-                        or self.b_has_ul[y, nx] != has_ul
-                        or (
-                            has_fg
-                            and (
-                                self.b_fg_r[y, nx] != fg_r
-                                or self.b_fg_g[y, nx] != fg_g
-                                or self.b_fg_b[y, nx] != fg_b
-                            )
-                        )
-                        or (
-                            has_bg
-                            and (
-                                self.b_bg_r[y, nx] != bg_r
-                                or self.b_bg_g[y, nx] != bg_g
-                                or self.b_bg_b[y, nx] != bg_b
-                            )
-                        )
-                        or (
-                            has_ul
-                            and (
-                                self.b_ul_r[y, nx] != ul_r
-                                or self.b_ul_g[y, nx] != ul_g
-                                or self.b_ul_b[y, nx] != ul_b
-                            )
-                        )
-                    ):
-                        break
-                    x = nx
-
-            app("".join(chars))
-
-        # Synchronize front buffer
+        # 4. Synchronize front buffer (Your existing fast logic)
         self.f_char[diff] = self.b_char[diff]
         self.f_has_fg[diff] = self.b_has_fg[diff]
         self.f_fg_r[diff] = self.b_fg_r[diff]
