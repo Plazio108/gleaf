@@ -262,59 +262,66 @@ class PurePythonCanvas(BaseCanvas):
             return
 
         tx_start, ty_start = cx_start - x, cy_start - y
-        c_w, t_w = self.width, texture.width
+        t_w = texture.width
         t_cells = texture.cells
-
-        # Hoist locals for pointer-math speed in loop
-        b_ch = self.b_char
-        b_h_fg, b_fr, b_fg, b_fb = self.b_has_fg, self.b_fg_r, self.b_fg_g, self.b_fg_b
-        b_h_bg, b_br, b_bg, b_bb = self.b_has_bg, self.b_bg_r, self.b_bg_g, self.b_bg_b
-        b_h_ul, b_ur, b_ug, b_ub = self.b_has_ul, self.b_ul_r, self.b_ul_g, self.b_ul_b
-        b_st = self.b_style
+        grid = self.grid
 
         for cy in range(cy_start, cy_end):
             ty = ty_start + (cy - cy_start)
-            c_base, t_base = cy * c_w, ty * t_w
+            t_base = ty * t_w
+            grid_row = grid[cy]
 
             for cx in range(cx_start, cx_end):
                 tx = tx_start + (cx - cx_start)
-                c_idx, t_idx = c_base + cx, t_base + tx
+                t_idx = t_base + tx
 
-                ch, fr, fg, fb, fm, br, bg, bb, bm, ur, ug, ub, um, st, sm = t_cells[
-                    t_idx
-                ]
+                (
+                    ch,
+                    fr,
+                    fg,
+                    fb,
+                    fm,
+                    br,
+                    bg,
+                    bb,
+                    bm,
+                    ur,
+                    ug,
+                    ub,
+                    um,
+                    st,
+                    sm,
+                ) = t_cells[t_idx]
 
+                cell = grid_row[cx]
+
+                # Update character if non-zero (0 represents empty/transparent char)
                 if ch != 0:
-                    b_ch[c_idx] = chr(ch)  # Convert binary int to char string
+                    cell["char"] = chr(ch)
 
+                # Foreground RGB mapping
                 if fm == MODE_SET:
-                    b_h_fg[c_idx] = 1
-                    b_fr[c_idx] = fr
-                    b_fg[c_idx] = fg
-                    b_fb[c_idx] = fb
+                    cell["fg"] = (fr, fg, fb)
                 elif fm == MODE_CLEAR:
-                    b_h_fg[c_idx] = 0
+                    cell["fg"] = None
 
+                # Background RGB mapping
                 if bm == MODE_SET:
-                    b_h_bg[c_idx] = 1
-                    b_br[c_idx] = br
-                    b_bg[c_idx] = bg
-                    b_bb[c_idx] = bb
+                    cell["bg"] = (br, bg, bb)
                 elif bm == MODE_CLEAR:
-                    b_h_bg[c_idx] = 0
+                    cell["bg"] = None
 
+                # Underline RGB mapping
                 if um == MODE_SET:
-                    b_h_ul[c_idx] = 1
-                    b_ur[c_idx] = ur
-                    b_ug[c_idx] = ug
-                    b_ub[c_idx] = ub
+                    cell["ul_fg"] = (ur, ug, ub)
                 elif um == MODE_CLEAR:
-                    b_h_ul[c_idx] = 0
+                    cell["ul_fg"] = None
 
+                # Style Bitmask mapping
                 if sm == MODE_SET:
-                    b_st[c_idx] = st
+                    cell["style"] = st
                 elif sm == MODE_CLEAR:
-                    b_st[c_idx] = 0
+                    cell["style"] = Modifiers.NORMAL
 
 
 class PurePythonTexture(BaseTexture):
