@@ -683,7 +683,6 @@ class NumPyCanvas(BaseCanvas):
             sys.stdout.flush()
 
     def apply_texture(self, texture, x: int, y: int):
-        # 1. Calculate clipping bounds
         cx_start, cy_start = max(0, x), max(0, y)
         cx_end = min(self.width, x + texture.width)
         cy_end = min(self.height, y + texture.height)
@@ -691,89 +690,87 @@ class NumPyCanvas(BaseCanvas):
         if cx_start >= cx_end or cy_start >= cy_end:
             return
 
-        # Coordinates relative to texture and canvas
         tx_start, ty_start = cx_start - x, cy_start - y
-        tx_end = tx_start + (cx_end - cx_start)
-        ty_end = ty_start + (cy_end - cy_start)
+        c_w, t_w = self.width, texture.width
+        t_cells = texture.cells
 
-        # 2. Extract slice views (Zero-copy views where possible)
-        # Assuming canvas buffers are 2D arrays shaped (height, width)
-        # or flat arrays reshaped to (height, width)
+        # Hoist array references explicitly to avoid tuple unpacking shadow bugs
+        b_char = self.b_char
+        b_h_fg = self.b_has_fg
+        b_fg_r = self.b_fg_r
+        b_fg_g = self.b_fg_g
+        b_fg_b = self.b_fg_b
 
-        # Texture slicing
-        t_cells = texture.cells  # Shape: (tex_h, tex_w, 15) or structured array
-        t_sub = t_cells[ty_start:ty_end, tx_start:tx_end]
+        b_h_bg = self.b_has_bg
+        b_bg_r = self.b_bg_r
+        b_bg_g = self.b_bg_g
+        b_bg_b = self.b_bg_b
 
-        # Extract texture channels from struct/array indices:
-        # 0: ch, 1-3: fg(r,g,b), 4: fm, 5-7: bg(r,g,b), 8: bm, 9-11: ul(r,g,b), 12: um, 13: st, 14: sm
-        t_ch = t_sub[..., 0]
+        b_h_ul = self.b_has_ul
+        b_ul_r = self.b_ul_r
+        b_ul_g = self.b_ul_g
+        b_ul_b = self.b_ul_b
 
-        t_fg_r, t_fg_g, t_fg_b = t_sub[..., 1], t_sub[..., 2], t_sub[..., 3]
-        t_fm = t_sub[..., 4]
+        b_style = self.b_style
 
-        t_bg_r, t_bg_g, t_bg_b = t_sub[..., 5], t_sub[..., 6], t_sub[..., 7]
-        t_bm = t_sub[..., 8]
+        # Use hardcoded integers to bypass any `MODE_SET` import evaluation bugs
+        MODE_SET = 1
+        MODE_CLEAR = 2
 
-        t_ul_r, t_ul_g, t_ul_b = t_sub[..., 9], t_sub[..., 10], t_sub[..., 11]
-        t_um = t_sub[..., 12]
+        for cy in range(cy_start, cy_end):
+            ty = ty_start + (cy - cy_start)
+            c_base, t_base = cy * c_w, ty * t_w
 
-        t_st = t_sub[..., 13]
-        t_sm = t_sub[..., 14]
+            for cx in range(cx_start, cx_end):
+                tx = tx_start + (cx - cx_start)
+                c_idx = c_base + cx
+                t_idx = t_base + tx
 
-        # Canvas Slicing
-        c_slice = (slice(cy_start, cy_end), slice(cx_start, cx_end))
+                # Direct index access prevents the 15-variable unpack from
+                # shifting values or shadowing local aliases.
+                cell = t_cells[t_idx]
 
-        # -------------------------------------------------------------
-        # 3. MERGING LOGIC
-        # -------------------------------------------------------------
+                # 0: Character
+                ch = cell[0]
+                if ch != 0:
+                    b_char[c_idx] = chr(ch)
 
-        # A. Character Updates: Only overwrite canvas character if texture char != 0
-        char_mask = t_ch != 0
-        self.b_char[c_slice] = np.where(char_mask, t_ch, self.b_char[c_slice])
+                # Foreground Mode (index 4)
+                fm = cell[4]
+                if fm == MODE_SET:
+                    b_h_fg[c_idx] = 1
+                    b_fg_r[c_idx] = cell[1]
+                    b_fg_g[c_idx] = cell[2]
+                    b_fg_b[c_idx] = cell[3]
+                elif fm == MODE_CLEAR:
+                    b_h_fg[c_idx] = 0
 
-        # B. Foreground Updates
-        fg_set = t_fm == MODE_SET
-        fg_clear = t_fm == MODE_CLEAR
+                # Background Mode (index 8)
+                bm = cell[8]
+                if bm == MODE_SET:
+                    b_h_bg[c_idx] = 1
+                    b_bg_r[c_idx] = cell[5]
+                    b_bg_g[c_idx] = cell[6]
+                    b_bg_b[c_idx] = cell[7]
+                elif bm == MODE_CLEAR:
+                    b_h_bg[c_idx] = 0
 
-        self.b_has_fg[c_slice] = np.where(
-            fg_set, 1, np.where(fg_clear, 0, self.b_has_fg[c_slice])
-        )
-        self.b_fg_r[c_slice] = np.where(fg_set, t_fg_r, self.b_fg_r[c_slice])
-        self.b_fg_g[c_slice] = np.where(fg_set, t_fg_g, self.b_fg_g[c_slice])
-        self.b_fg_b[c_slice] = np.where(fg_set, t_fg_b, self.b_fg_b[c_slice])
+                # Underline Mode (index 12)
+                um = cell[12]
+                if um == MODE_SET:
+                    b_h_ul[c_idx] = 1
+                    b_ul_r[c_idx] = cell[9]
+                    b_ul_g[c_idx] = cell[10]
+                    b_ul_b[c_idx] = cell[11]
+                elif um == MODE_CLEAR:
+                    b_h_ul[c_idx] = 0
 
-        # C. Background Updates (THIS PRESERVES CANVAS BG UNDER HALF BLOCKS)
-        bg_set = t_bm == MODE_SET
-        bg_clear = t_bm == MODE_CLEAR
-
-        # Only update b_has_bg to 1 if MODE_SET, 0 if MODE_CLEAR, else retain canvas b_has_bg!
-        self.b_has_bg[c_slice] = np.where(
-            bg_set, 1, np.where(bg_clear, 0, self.b_has_bg[c_slice])
-        )
-
-        # Only overwrite RGB values when MODE_SET is true
-        self.b_bg_r[c_slice] = np.where(bg_set, t_bg_r, self.b_bg_r[c_slice])
-        self.b_bg_g[c_slice] = np.where(bg_set, t_bg_g, self.b_bg_g[c_slice])
-        self.b_bg_b[c_slice] = np.where(bg_set, t_bg_b, self.b_bg_b[c_slice])
-
-        # D. Underline Updates
-        ul_set = t_um == MODE_SET
-        ul_clear = t_um == MODE_CLEAR
-
-        self.b_has_ul[c_slice] = np.where(
-            ul_set, 1, np.where(ul_clear, 0, self.b_has_ul[c_slice])
-        )
-        self.b_ul_r[c_slice] = np.where(ul_set, t_ul_r, self.b_ul_r[c_slice])
-        self.b_ul_g[c_slice] = np.where(ul_set, t_ul_g, self.b_ul_g[c_slice])
-        self.b_ul_b[c_slice] = np.where(ul_set, t_ul_b, self.b_ul_b[c_slice])
-
-        # E. Style Updates
-        st_set = t_sm == MODE_SET
-        st_clear = t_sm == MODE_CLEAR
-
-        self.b_style[c_slice] = np.where(
-            st_set, t_st, np.where(st_clear, 0, self.b_style[c_slice])
-        )
+                # Style Mode (index 14)
+                sm = cell[14]
+                if sm == MODE_SET:
+                    b_style[c_idx] = cell[13]
+                elif sm == MODE_CLEAR:
+                    b_style[c_idx] = 0
 
 
 class NumpyTexture(BaseTexture):
