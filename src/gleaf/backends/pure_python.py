@@ -1,9 +1,16 @@
 """Pure Python Double-Buffered Delta Renderer integrated with TerminalCaps."""
 
+import struct
 import sys
 
 from ..caps import RGB, Modifiers, TerminalCaps
-from .base import UNSET, BaseCanvas
+from ..textures import (
+    CELL_STRUCT_FMT,
+    EMPTY_CELL,
+    MODE_CLEAR,
+    MODE_SET,
+)
+from .base import UNSET, BaseCanvas, BaseTexture
 
 try:
     import termios
@@ -246,3 +253,339 @@ class PurePythonCanvas(BaseCanvas):
         if out:
             sys.__stdout__.write("".join(out))
             sys.__stdout__.flush()
+
+    def apply_texture(self, texture: "PurePythonTexture", x: int, y: int):
+        cx_start, cy_start = max(0, x), max(0, y)
+        cx_end = min(self.width, x + texture.width)
+        cy_end = min(self.height, y + texture.height)
+        if cx_start >= cx_end or cy_start >= cy_end:
+            return
+
+        tx_start, ty_start = cx_start - x, cy_start - y
+        c_w, t_w = self.width, texture.width
+        t_cells = texture.cells
+
+        # Hoist locals for pointer-math speed in loop
+        b_ch = self.b_char
+        b_h_fg, b_fr, b_fg, b_fb = self.b_has_fg, self.b_fg_r, self.b_fg_g, self.b_fg_b
+        b_h_bg, b_br, b_bg, b_bb = self.b_has_bg, self.b_bg_r, self.b_bg_g, self.b_bg_b
+        b_h_ul, b_ur, b_ug, b_ub = self.b_has_ul, self.b_ul_r, self.b_ul_g, self.b_ul_b
+        b_st = self.b_style
+
+        for cy in range(cy_start, cy_end):
+            ty = ty_start + (cy - cy_start)
+            c_base, t_base = cy * c_w, ty * t_w
+
+            for cx in range(cx_start, cx_end):
+                tx = tx_start + (cx - cx_start)
+                c_idx, t_idx = c_base + cx, t_base + tx
+
+                ch, fr, fg, fb, fm, br, bg, bb, bm, ur, ug, ub, um, st, sm = t_cells[
+                    t_idx
+                ]
+
+                if ch != 0:
+                    b_ch[c_idx] = chr(ch)  # Convert binary int to char string
+
+                if fm == MODE_SET:
+                    b_h_fg[c_idx] = 1
+                    b_fr[c_idx] = fr
+                    b_fg[c_idx] = fg
+                    b_fb[c_idx] = fb
+                elif fm == MODE_CLEAR:
+                    b_h_fg[c_idx] = 0
+
+                if bm == MODE_SET:
+                    b_h_bg[c_idx] = 1
+                    b_br[c_idx] = br
+                    b_bg[c_idx] = bg
+                    b_bb[c_idx] = bb
+                elif bm == MODE_CLEAR:
+                    b_h_bg[c_idx] = 0
+
+                if um == MODE_SET:
+                    b_h_ul[c_idx] = 1
+                    b_ur[c_idx] = ur
+                    b_ug[c_idx] = ug
+                    b_ub[c_idx] = ub
+                elif um == MODE_CLEAR:
+                    b_h_ul[c_idx] = 0
+
+                if sm == MODE_SET:
+                    b_st[c_idx] = st
+                elif sm == MODE_CLEAR:
+                    b_st[c_idx] = 0
+
+
+class PurePythonTexture(BaseTexture):
+    def __init__(self, width: int, height: int, data_buffer=None):
+        super().__init__(width, height)
+        if data_buffer is not None:
+            self.cells = list(struct.iter_unpack(CELL_STRUCT_FMT, data_buffer))
+        else:
+            self.cells = [EMPTY_CELL] * (width * height)
+
+    def clear(self):
+        self.cells = [EMPTY_CELL] * (self.width * self.height)
+
+    # --- Getters ---
+    def get_char(self, x: int, y: int) -> str:
+        if 0 <= y < self.height and 0 <= x < self.width:
+            ch = self.cells[y * self.width + x][0]
+            return chr(ch) if ch != 0 else " "
+        return " "
+
+    def get_fg(self, x: int, y: int) -> tuple[int, int, int] | None:
+        if 0 <= y < self.height and 0 <= x < self.width:
+            cell = self.cells[y * self.width + x]
+            if cell[4] == MODE_SET:
+                return (cell[1], cell[2], cell[3])
+        return None
+
+    def get_bg(self, x: int, y: int) -> tuple[int, int, int] | None:
+        if 0 <= y < self.height and 0 <= x < self.width:
+            cell = self.cells[y * self.width + x]
+            if cell[8] == MODE_SET:
+                return (cell[5], cell[6], cell[7])
+        return None
+
+    def get_style(self, x: int, y: int) -> int:
+        if 0 <= y < self.height and 0 <= x < self.width:
+            cell = self.cells[y * self.width + x]
+            if cell[14] == MODE_SET:
+                return cell[13]
+        return 0
+
+    # --- Drawing API ---
+    def put_str(
+        self, x: int, y: int, text: str, fg=UNSET, bg=UNSET, style=UNSET, ul_fg=UNSET
+    ):
+        if y < 0 or y >= self.height or x >= self.width:
+            return
+
+        cx_start = max(0, x)
+        text_start = cx_start - x
+        avail = self.width - cx_start
+        chars_to_draw = text[text_start : text_start + avail]
+        if not chars_to_draw:
+            return
+
+        f_mode = (
+            MODE_SET
+            if fg not in (UNSET, None)
+            else (MODE_CLEAR if fg is None else None)
+        )
+        b_mode = (
+            MODE_SET
+            if bg not in (UNSET, None)
+            else (MODE_CLEAR if bg is None else None)
+        )
+        u_mode = (
+            MODE_SET
+            if ul_fg not in (UNSET, None)
+            else (MODE_CLEAR if ul_fg is None else None)
+        )
+        s_mode = (
+            MODE_SET
+            if style not in (UNSET, None, 0)
+            else (MODE_CLEAR if style in (None, 0) else None)
+        )
+
+        fr, fg_c, fb = fg if f_mode == MODE_SET else (0, 0, 0)
+        br, bg_c, bb = bg if b_mode == MODE_SET else (0, 0, 0)
+        ur, ug_c, ub = ul_fg if u_mode == MODE_SET else (0, 0, 0)
+        st = style if s_mode == MODE_SET else 0
+
+        idx_base = y * self.width
+        cells = self.cells
+
+        for i, char in enumerate(chars_to_draw):
+            idx = idx_base + cx_start + i
+            (
+                c_ch,
+                c_fr,
+                c_fg,
+                c_fb,
+                c_fm,
+                c_br,
+                c_bg,
+                c_bb,
+                c_bm,
+                c_ur,
+                c_ug,
+                c_ub,
+                c_um,
+                c_st,
+                c_sm,
+            ) = cells[idx]
+
+            n_ch = ord(char)
+            n_fr, n_fg, n_fb, n_fm = (
+                (fr, fg_c, fb, f_mode)
+                if f_mode is not None
+                else (c_fr, c_fg, c_fb, c_fm)
+            )
+            n_br, n_bg, n_bb, n_bm = (
+                (br, bg_c, bb, b_mode)
+                if b_mode is not None
+                else (c_br, c_bg, c_bb, c_bm)
+            )
+            n_ur, n_ug, n_ub, n_um = (
+                (ur, ug_c, ub, u_mode)
+                if u_mode is not None
+                else (c_ur, c_ug, c_ub, c_um)
+            )
+            n_st, n_sm = (st, s_mode) if s_mode is not None else (c_st, c_sm)
+
+            cells[idx] = (
+                n_ch,
+                n_fr,
+                n_fg,
+                n_fb,
+                n_fm,
+                n_br,
+                n_bg,
+                n_bb,
+                n_bm,
+                n_ur,
+                n_ug,
+                n_ub,
+                n_um,
+                n_st,
+                n_sm,
+            )
+
+    # --- Zone Editing ---
+    def edit_region_colors(
+        self, x: int, y: int, w: int, h: int, fg=UNSET, bg=UNSET, ul_fg=UNSET
+    ):
+        cx_start, cy_start = max(0, x), max(0, y)
+        cx_end, cy_end = min(self.width, x + w), min(self.height, y + h)
+        if cx_start >= cx_end or cy_start >= cy_end:
+            return
+
+        f_mode = (
+            MODE_SET
+            if fg not in (UNSET, None)
+            else (MODE_CLEAR if fg is None else None)
+        )
+        b_mode = (
+            MODE_SET
+            if bg not in (UNSET, None)
+            else (MODE_CLEAR if bg is None else None)
+        )
+        u_mode = (
+            MODE_SET
+            if ul_fg not in (UNSET, None)
+            else (MODE_CLEAR if ul_fg is None else None)
+        )
+
+        fr, fg_c, fb = fg if f_mode == MODE_SET else (0, 0, 0)
+        br, bg_c, bb = bg if b_mode == MODE_SET else (0, 0, 0)
+        ur, ug_c, ub = ul_fg if u_mode == MODE_SET else (0, 0, 0)
+
+        cells = self.cells
+        width = self.width
+
+        for cy in range(cy_start, cy_end):
+            idx_base = cy * width
+            for cx in range(cx_start, cx_end):
+                idx = idx_base + cx
+                (
+                    c_ch,
+                    c_fr,
+                    c_fg,
+                    c_fb,
+                    c_fm,
+                    c_br,
+                    c_bg,
+                    c_bb,
+                    c_bm,
+                    c_ur,
+                    c_ug,
+                    c_ub,
+                    c_um,
+                    c_st,
+                    c_sm,
+                ) = cells[idx]
+
+                n_fr, n_fg, n_fb, n_fm = (
+                    (fr, fg_c, fb, f_mode)
+                    if f_mode is not None
+                    else (c_fr, c_fg, c_fb, c_fm)
+                )
+                n_br, n_bg, n_bb, n_bm = (
+                    (br, bg_c, bb, b_mode)
+                    if b_mode is not None
+                    else (c_br, c_bg, c_bb, c_bm)
+                )
+                n_ur, n_ug, n_ub, n_um = (
+                    (ur, ug_c, ub, u_mode)
+                    if u_mode is not None
+                    else (c_ur, c_ug, c_ub, c_um)
+                )
+
+                cells[idx] = (
+                    c_ch,
+                    n_fr,
+                    n_fg,
+                    n_fb,
+                    n_fm,
+                    n_br,
+                    n_bg,
+                    n_bb,
+                    n_bm,
+                    n_ur,
+                    n_ug,
+                    n_ub,
+                    n_um,
+                    c_st,
+                    c_sm,
+                )
+
+    def edit_region_style(
+        self, x: int, y: int, w: int, h: int, style: int, mode: str = "add"
+    ):
+        cx_start, cy_start = max(0, x), max(0, y)
+        cx_end, cy_end = min(self.width, x + w), min(self.height, y + h)
+        if cx_start >= cx_end or cy_start >= cy_end:
+            return
+
+        cells = self.cells
+        width = self.width
+
+        for cy in range(cy_start, cy_end):
+            idx_base = cy * width
+            for cx in range(cx_start, cx_end):
+                idx = idx_base + cx
+                c = cells[idx]
+                curr_st = c[13]
+
+                if mode == "set":
+                    n_st, n_sm = style, MODE_SET
+                elif mode == "add":
+                    n_st, n_sm = curr_st | style, MODE_SET
+                elif mode == "remove":
+                    n_st, n_sm = curr_st & ~style, c[14]
+                elif mode == "toggle":
+                    n_st, n_sm = curr_st ^ style, MODE_SET
+                else:
+                    continue
+
+                cells[idx] = (
+                    c[0],
+                    c[1],
+                    c[2],
+                    c[3],
+                    c[4],
+                    c[5],
+                    c[6],
+                    c[7],
+                    c[8],
+                    c[9],
+                    c[10],
+                    c[11],
+                    c[12],
+                    n_st,
+                    n_sm,
+                )

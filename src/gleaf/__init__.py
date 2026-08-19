@@ -3,7 +3,7 @@ gleaf - Adaptive High-Performance Terminal Canvas.
 Supports numba, numpy, curses, rich, and pure python fallbacks.
 """
 
-from .backends.base import BaseCanvas
+from .backends.base import BaseCanvas, BaseTexture
 from .backends.pure_python import PurePythonCanvas
 from .caps import TerminalCaps
 from .styles import Modifiers, Style
@@ -36,25 +36,13 @@ except ImportError:
 def get_canvas_class(backend: str = "auto"):
     """Resolves and returns the canvas class based on selection."""
     backend = backend.lower().strip()
-
     if backend == "auto":
-        # if HAS_NUMBA:
-        #     return NumbaCanvas, "Numba (Parallel JIT)"
         if HAS_NUMPY:
             return NumPyCanvas, "NumPy (Vectorized)"
-        # if HAS_RICH:
-        #     return RichCanvas, "Rich (Segment Builder)"
-        # if HAS_CURSES:
-        #     return CursesCanvas, "Curses (Native)"
         return PurePythonCanvas, "Pure Python (Zero-Dependency)"
 
-    # Manual forces
-    # if backend == "numba" and HAS_NUMBA:
-    #     return NumbaCanvas, "Numba"
     if backend == "numpy" and HAS_NUMPY:
         return NumPyCanvas, "NumPy"
-    # if backend == "fast_numpy" and HAS_NUMPY:
-    #     return FastNumPyCanvas, "Fast NumPy"
     if backend == "rich" and HAS_RICH:
         return RichCanvas, "Rich"
     if backend == "curses" and HAS_CURSES:
@@ -65,17 +53,57 @@ def get_canvas_class(backend: str = "auto"):
     raise ImportError(f"Backend '{backend}' requested but dependencies are missing.")
 
 
+def get_texture_class(backend: str = "auto"):
+    """Resolves the corresponding Texture class for the active backend."""
+    cls, _ = get_canvas_class(backend)
+    if cls.__name__ == "NumPyCanvas":
+        from .backends.numpy_backend import NumpyTexture
+
+        return NumpyTexture
+    else:
+        from .backends.pure_python import PurePythonTexture
+
+        return PurePythonTexture
+
+
 def TerminalCanvas(width: int = None, height: int = None, backend: str = "auto"):
     cls, _ = get_canvas_class(backend)
     return cls(width=width, height=height)
 
 
+def TerminalTexture(
+    width: int = None,
+    height: int = None,
+    backend: str = "auto",
+    data_buffer=None,
+    matrix=None,
+):
+    """
+    Creates a texture matching the selected backend.
+    Can be loaded from mmap/bytes (data_buffer) or a 2D array (matrix).
+    """
+    cls = get_texture_class(backend)
+
+    if matrix is not None:
+        return cls.from_matrix(matrix)
+
+    # Needs valid dimensions if creating empty or from bytes
+    if width is None or height is None:
+        raise ValueError("Texture requires explicit width and height.")
+
+    if data_buffer is not None:
+        return cls(width, height, data_buffer=data_buffer)
+    return cls(width, height)
+
+
 __all__ = [
     "BaseCanvas",
+    "BaseTexture",
     "Modifiers",
     "Style",
     "TerminalCanvas",
     "TerminalCaps",
+    "TerminalTexture",
     "enable_suspend",
     "get_canvas_class",
     "handoff",

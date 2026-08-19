@@ -418,6 +418,9 @@ class BaseCanvas:
 
     #     return "\n".join(output_lines)
 
+    def apply_texture(self, texture: "BaseTexture", x: int, y: int):
+        raise NotImplementedError
+
     def render_ansi_sequence(self, ansi_seq: str, width: int, height: int) -> str:
         """
         Parses a raw ANSI escape string (with cursor movements and SGR styles),
@@ -516,3 +519,170 @@ class BaseCanvas:
 
         # Join with standard newlines (no need for cursor resets to print this normally)
         return "\n".join(output_lines)
+
+
+class BaseTexture:
+    """
+    Pure off-screen drawing rectangle.
+    Contains the full cell/region drawing, getter, and editing APIs.
+    Does NOT handle terminal state, rendering, or I/O.
+    """
+
+    def __init__(self, width: int, height: int):
+        self.width = width
+        self.height = height
+
+    # --- Abstract Cell Getters ---
+    def get_char(self, x: int, y: int) -> str:
+        raise NotImplementedError
+
+    def get_fg(self, x: int, y: int) -> tuple[int, int, int] | None:
+        raise NotImplementedError
+
+    def get_bg(self, x: int, y: int) -> tuple[int, int, int] | None:
+        raise NotImplementedError
+
+    def get_style(self, x: int, y: int) -> int:
+        raise NotImplementedError
+
+    def get_cell(
+        self, x: int, y: int
+    ) -> tuple[str, tuple[int, int, int] | None, tuple[int, int, int] | None, int]:
+        """Returns (char, fg, bg, style) at (x, y)."""
+        return (
+            self.get_char(x, y),
+            self.get_fg(x, y),
+            self.get_bg(x, y),
+            self.get_style(x, y),
+        )
+
+    # --- Default Region Getters (Fallback using Cell Getters) ---
+    def get_region_chars(self, x: int, y: int, w: int, h: int) -> list[list[str]]:
+        return [
+            [self.get_char(cx, cy) for cx in range(x, x + w)] for cy in range(y, y + h)
+        ]
+
+    def get_region_fg(
+        self, x: int, y: int, w: int, h: int
+    ) -> list[list[tuple[int, int, int] | None]]:
+        return [
+            [self.get_fg(cx, cy) for cx in range(x, x + w)] for cy in range(y, y + h)
+        ]
+
+    def get_region_bg(
+        self, x: int, y: int, w: int, h: int
+    ) -> list[list[tuple[int, int, int] | None]]:
+        return [
+            [self.get_bg(cx, cy) for cx in range(x, x + w)] for cy in range(y, y + h)
+        ]
+
+    def get_region_styles(self, x: int, y: int, w: int, h: int) -> list[list[int]]:
+        return [
+            [self.get_style(cx, cy) for cx in range(x, x + w)] for cy in range(y, y + h)
+        ]
+
+    def get_region_cells(
+        self, x: int, y: int, w: int, h: int
+    ) -> list[
+        list[tuple[str, tuple[int, int, int] | None, tuple[int, int, int] | None, int]]
+    ]:
+        return [
+            [self.get_cell(cx, cy) for cx in range(x, x + w)] for cy in range(y, y + h)
+        ]
+
+    # --- Drawing API ---
+    def clear(self):
+        """Resets all cells to empty/transparent."""
+        raise NotImplementedError
+
+    def put_str(
+        self, x: int, y: int, text: str, fg=UNSET, bg=UNSET, style=UNSET, ul_fg=UNSET
+    ):
+        """Writes string at (x,y). Unpassed parameters preserve existing cell properties."""
+        raise NotImplementedError
+
+    def put_block(
+        self,
+        x: int,
+        y: int,
+        text: str,
+        max_w: int | None = None,
+        max_h: int | None = None,
+        fg=UNSET,
+        bg=UNSET,
+        style=UNSET,
+        ul_fg=UNSET,
+        wrap: bool = True,
+    ) -> int:
+        """Prints multiline text block with optional word wrapping and height bounds."""
+        lines = text.splitlines()
+        formatted_lines: list[str] = []
+
+        eff_w = max_w if max_w is not None else (self.width - x)
+        if eff_w <= 0:
+            return 0
+
+        for line in lines:
+            if wrap and len(line) > eff_w:
+                wrapped = textwrap.wrap(line, width=eff_w)
+                formatted_lines.extend(wrapped if wrapped else [""])
+            else:
+                formatted_lines.append(line[:eff_w])
+
+        lines_to_draw = formatted_lines
+        if max_h is not None:
+            lines_to_draw = lines_to_draw[:max_h]
+
+        for i, line_text in enumerate(lines_to_draw):
+            py = y + i
+            if py >= self.height:
+                break
+            if py >= 0:
+                self.put_str(x, py, line_text, fg=fg, bg=bg, style=style, ul_fg=ul_fg)
+
+        return len(lines_to_draw)
+
+    # --- Zone / Region Editing ---
+    def edit_region_colors(
+        self, x: int, y: int, w: int, h: int, fg=UNSET, bg=UNSET, ul_fg=UNSET
+    ):
+        """Edits foreground/background/underline colors in a bounding box without affecting text or styles."""
+        raise NotImplementedError
+
+    def edit_region_style(
+        self,
+        x: int,
+        y: int,
+        w: int,
+        h: int,
+        style: int,
+        mode: str = "add",
+    ):
+        """
+        Edits style flags in a bounding box without modifying text or colors.
+        mode options: 'add', 'remove', 'set', 'toggle'
+        """
+        raise NotImplementedError
+
+    @classmethod
+    def from_matrix(cls, matrix: list[list[tuple]]):
+        """Loads texture from a 2D matrix of cells dynamically using the drawing API."""
+        height = len(matrix)
+        width = len(matrix[0]) if height > 0 else 0
+        tex = cls(width, height)
+        for y, row in enumerate(matrix):
+            for x, cell in enumerate(row):
+                if not cell:
+                    continue
+                ch = cell[0] if len(cell) > 0 else " "
+                fg = cell[1] if len(cell) > 1 else UNSET
+                bg = cell[2] if len(cell) > 2 else UNSET
+                st = cell[3] if len(cell) > 3 else UNSET
+                ul = cell[4] if len(cell) > 4 else UNSET
+                if ch:
+                    tex.put_str(x, y, ch, fg=fg, bg=bg, style=st, ul_fg=ul)
+        return tex
+
+    def apply_to(self, canvas, x: int, y: int):
+        """Shortcut to stamp this texture onto a target terminal canvas."""
+        canvas.apply_texture(self, x, y)

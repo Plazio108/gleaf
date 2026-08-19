@@ -5,12 +5,14 @@ import sys
 
 import numpy as np
 
+from ..textures import MODE_CLEAR, MODE_SET, TEXTURE_DTYPE
+from .base import UNSET, BaseCanvas, BaseTexture
+
 try:
     from ..caps import Modifiers, TerminalCaps
 except ImportError:
     from gleaf.caps import Modifiers, TerminalCaps
 
-from .base import UNSET, BaseCanvas
 
 try:
     import termios
@@ -679,3 +681,230 @@ class NumPyCanvas(BaseCanvas):
         if buf:
             sys.stdout.write("".join(buf))
             sys.stdout.flush()
+
+    def apply_texture(self, texture: "NumpyTexture", x: int, y: int):
+        """Vectorized boolean mask stamping."""
+        cx_start, cy_start = max(0, x), max(0, y)
+        cx_end = min(self.width, x + texture.width)
+        cy_end = min(self.height, y + texture.height)
+
+        if cx_start >= cx_end or cy_start >= cy_end:
+            return
+
+        tx_start, ty_start = cx_start - x, cy_start - y
+        tx_end = tx_start + (cx_end - cx_start)
+        ty_end = ty_start + (cy_end - cy_start)
+
+        t_slice = texture.data[ty_start:ty_end, tx_start:tx_end]
+
+        # 1. Chars (Assume your b_char is a uint32 representation. If string, use .astype(str) or .view())
+        char_mask = t_slice["char"] != 0
+        if np.any(char_mask):
+            self.b_char[cy_start:cy_end, cx_start:cx_end][char_mask] = t_slice["char"][
+                char_mask
+            ]
+
+        # 2. Colors (Example for foreground)
+        fg_set = t_slice["fg_mode"] == MODE_SET
+        if np.any(fg_set):
+            self.b_has_fg[cy_start:cy_end, cx_start:cx_end][fg_set] = 1
+            self.b_fg_r[cy_start:cy_end, cx_start:cx_end][fg_set] = t_slice["fg_r"][
+                fg_set
+            ]
+            self.b_fg_g[cy_start:cy_end, cx_start:cx_end][fg_set] = t_slice["fg_g"][
+                fg_set
+            ]
+            self.b_fg_b[cy_start:cy_end, cx_start:cx_end][fg_set] = t_slice["fg_b"][
+                fg_set
+            ]
+
+        fg_clear = t_slice["fg_mode"] == MODE_CLEAR
+        if np.any(fg_clear):
+            self.b_has_fg[cy_start:cy_end, cx_start:cx_end][fg_clear] = 0
+
+        # Duplicate above block for bg (t_slice['bg_mode'], self.b_has_bg)
+        # and ul (t_slice['ul_mode'], self.b_has_ul)
+
+        # 3. Styles
+        style_set = t_slice["style_mode"] == MODE_SET
+        if np.any(style_set):
+            self.b_style[cy_start:cy_end, cx_start:cx_end][style_set] = t_slice[
+                "style"
+            ][style_set]
+
+        style_clear = t_slice["style_mode"] == MODE_CLEAR
+        if np.any(style_clear):
+            self.b_style[cy_start:cy_end, cx_start:cx_end][style_clear] = 0
+
+
+class NumpyTexture(BaseTexture):
+    def __init__(self, width: int, height: int, data_buffer=None):
+        super().__init__(width, height)
+        if data_buffer is not None:
+            self.data = np.frombuffer(data_buffer, dtype=TEXTURE_DTYPE).reshape(
+                (height, width)
+            )
+            if not self.data.flags.writeable:
+                self.data = self.data.copy()
+        else:
+            self.data = np.zeros((height, width), dtype=TEXTURE_DTYPE)
+
+    def clear(self):
+        self.data[...] = 0
+
+    # --- Getters ---
+    def get_char(self, x: int, y: int) -> str:
+        if 0 <= y < self.height and 0 <= x < self.width:
+            code = self.data["char"][y, x]
+            return chr(code) if code != 0 else " "
+        return " "
+
+    def get_fg(self, x: int, y: int) -> tuple[int, int, int] | None:
+        if 0 <= y < self.height and 0 <= x < self.width:
+            if self.data["fg_mode"][y, x] == MODE_SET:
+                return (
+                    int(self.data["fg_r"][y, x]),
+                    int(self.data["fg_g"][y, x]),
+                    int(self.data["fg_b"][y, x]),
+                )
+        return None
+
+    def get_bg(self, x: int, y: int) -> tuple[int, int, int] | None:
+        if 0 <= y < self.height and 0 <= x < self.width:
+            if self.data["bg_mode"][y, x] == MODE_SET:
+                return (
+                    int(self.data["bg_r"][y, x]),
+                    int(self.data["bg_g"][y, x]),
+                    int(self.data["bg_b"][y, x]),
+                )
+        return None
+
+    def get_style(self, x: int, y: int) -> int:
+        if 0 <= y < self.height and 0 <= x < self.width:
+            if self.data["style_mode"][y, x] == MODE_SET:
+                return int(self.data["style"][y, x])
+        return 0
+
+    # --- Vectorized Region Getters ---
+    def get_region_chars(self, x: int, y: int, w: int, h: int) -> list[list[str]]:
+        sub = self.data["char"][
+            max(0, y) : min(self.height, y + h), max(0, x) : min(self.width, x + w)
+        ]
+        return [[chr(c) if c != 0 else " " for c in row] for row in sub]
+
+    def get_region_styles(self, x: int, y: int, w: int, h: int) -> list[list[int]]:
+        sub = self.data[
+            max(0, y) : min(self.height, y + h), max(0, x) : min(self.width, x + w)
+        ]
+        return [
+            [
+                int(cell["style"]) if cell["style_mode"] == MODE_SET else 0
+                for cell in row
+            ]
+            for row in sub
+        ]
+
+    # --- Drawing API ---
+    def put_str(
+        self, x: int, y: int, text: str, fg=UNSET, bg=UNSET, style=UNSET, ul_fg=UNSET
+    ):
+        if y < 0 or y >= self.height or x >= self.width:
+            return
+
+        cx_start = max(0, x)
+        text_start = cx_start - x
+        avail = self.width - cx_start
+        chars_to_draw = text[text_start : text_start + avail]
+        if not chars_to_draw:
+            return
+        cx_end = cx_start + len(chars_to_draw)
+
+        self.data["char"][y, cx_start:cx_end] = [ord(c) for c in chars_to_draw]
+
+        if fg is not UNSET:
+            if fg is None:
+                self.data["fg_mode"][y, cx_start:cx_end] = MODE_CLEAR
+            else:
+                self.data["fg_r"][y, cx_start:cx_end] = fg[0]
+                self.data["fg_g"][y, cx_start:cx_end] = fg[1]
+                self.data["fg_b"][y, cx_start:cx_end] = fg[2]
+                self.data["fg_mode"][y, cx_start:cx_end] = MODE_SET
+
+        if bg is not UNSET:
+            if bg is None:
+                self.data["bg_mode"][y, cx_start:cx_end] = MODE_CLEAR
+            else:
+                self.data["bg_r"][y, cx_start:cx_end] = bg[0]
+                self.data["bg_g"][y, cx_start:cx_end] = bg[1]
+                self.data["bg_b"][y, cx_start:cx_end] = bg[2]
+                self.data["bg_mode"][y, cx_start:cx_end] = MODE_SET
+
+        if ul_fg is not UNSET:
+            if ul_fg is None:
+                self.data["ul_mode"][y, cx_start:cx_end] = MODE_CLEAR
+            else:
+                self.data["ul_r"][y, cx_start:cx_end] = ul_fg[0]
+                self.data["ul_g"][y, cx_start:cx_end] = ul_fg[1]
+                self.data["ul_b"][y, cx_start:cx_end] = ul_fg[2]
+                self.data["ul_mode"][y, cx_start:cx_end] = MODE_SET
+
+        if style is not UNSET:
+            if style in (None, 0):
+                self.data["style_mode"][y, cx_start:cx_end] = MODE_CLEAR
+            else:
+                self.data["style"][y, cx_start:cx_end] = style
+                self.data["style_mode"][y, cx_start:cx_end] = MODE_SET
+
+    # --- Vectorized Zone Editing ---
+    def edit_region_colors(
+        self, x: int, y: int, w: int, h: int, fg=UNSET, bg=UNSET, ul_fg=UNSET
+    ):
+        cx_start, cy_start = max(0, x), max(0, y)
+        cx_end, cy_end = min(self.width, x + w), min(self.height, y + h)
+        if cx_start >= cx_end or cy_start >= cy_end:
+            return
+
+        sub = self.data[cy_start:cy_end, cx_start:cx_end]
+
+        if fg is not UNSET:
+            if fg is None:
+                sub["fg_mode"] = MODE_CLEAR
+            else:
+                sub["fg_r"], sub["fg_g"], sub["fg_b"] = fg
+                sub["fg_mode"] = MODE_SET
+
+        if bg is not UNSET:
+            if bg is None:
+                sub["bg_mode"] = MODE_CLEAR
+            else:
+                sub["bg_r"], sub["bg_g"], sub["bg_b"] = bg
+                sub["bg_mode"] = MODE_SET
+
+        if ul_fg is not UNSET:
+            if ul_fg is None:
+                sub["ul_mode"] = MODE_CLEAR
+            else:
+                sub["ul_r"], sub["ul_g"], sub["ul_b"] = ul_fg
+                sub["ul_mode"] = MODE_SET
+
+    def edit_region_style(
+        self, x: int, y: int, w: int, h: int, style: int, mode: str = "add"
+    ):
+        cx_start, cy_start = max(0, x), max(0, y)
+        cx_end, cy_end = min(self.width, x + w), min(self.height, y + h)
+        if cx_start >= cx_end or cy_start >= cy_end:
+            return
+
+        sub = self.data[cy_start:cy_end, cx_start:cx_end]
+
+        if mode == "set":
+            sub["style"] = style
+            sub["style_mode"] = MODE_SET
+        elif mode == "add":
+            sub["style"] |= np.uint32(style)
+            sub["style_mode"] = MODE_SET
+        elif mode == "remove":
+            sub["style"] &= ~np.uint32(style)
+        elif mode == "toggle":
+            sub["style"] ^= np.uint32(style)
+            sub["style_mode"] = MODE_SET
