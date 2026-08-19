@@ -390,154 +390,6 @@ class NumPyCanvas(BaseCanvas):
             return self._ul_func(r, g, b)
         return f"58;2;{r};{g};{b}"
 
-    # def render(self, compute_only=False):
-    #     diff = (
-    #         (self.b_char != self.f_char)
-    #         | (self.b_style != self.f_style)
-    #         | (self.b_has_fg != self.f_has_fg)
-    #         | (self.b_has_bg != self.f_has_bg)
-    #         | (self.b_has_ul != self.f_has_ul)
-    #         | (
-    #             (self.b_has_fg == 1)
-    #             & (
-    #                 (self.b_fg_r != self.f_fg_r)
-    #                 | (self.b_fg_g != self.f_fg_g)
-    #                 | (self.b_fg_b != self.f_fg_b)
-    #             )
-    #         )
-    #         | (
-    #             (self.b_has_bg == 1)
-    #             & (
-    #                 (self.b_bg_r != self.f_bg_r)
-    #                 | (self.b_bg_g != self.f_bg_g)
-    #                 | (self.b_bg_b != self.f_bg_b)
-    #             )
-    #         )
-    #         | (
-    #             (self.b_has_ul == 1)
-    #             & (
-    #                 (self.b_ul_r != self.f_ul_r)
-    #                 | (self.b_ul_g != self.f_ul_g)
-    #                 | (self.b_ul_b != self.f_ul_b)
-    #             )
-    #         )
-    #     )
-
-    #     if not np.any(diff):
-    #         return
-
-    #     y_indices, x_indices = np.where(diff)
-    #     buf = []
-    #     app = buf.append
-
-    #     i = 0
-    #     n = len(y_indices)
-
-    #     while i < n:
-    #         y, x = y_indices[i], x_indices[i]
-    #         app(f"\033[{y + 1};{x + 1}H")
-
-    #         st = self.b_style[y, x]
-    #         has_fg, fg_r, fg_g, fg_b = (
-    #             self.b_has_fg[y, x],
-    #             self.b_fg_r[y, x],
-    #             self.b_fg_g[y, x],
-    #             self.b_fg_b[y, x],
-    #         )
-    #         has_bg, bg_r, bg_g, bg_b = (
-    #             self.b_has_bg[y, x],
-    #             self.b_bg_r[y, x],
-    #             self.b_bg_g[y, x],
-    #             self.b_bg_b[y, x],
-    #         )
-    #         has_ul, ul_r, ul_g, ul_b = (
-    #             self.b_has_ul[y, x],
-    #             self.b_ul_r[y, x],
-    #             self.b_ul_g[y, x],
-    #             self.b_ul_b[y, x],
-    #         )
-
-    #         sgr_codes = ["0"]
-    #         if st > 0:
-    #             sgr = self._style_to_sgr(st)
-    #             if sgr:
-    #                 sgr_codes.append(sgr)
-
-    #         if has_fg:
-    #             sgr_codes.append(self._fg_sgr(fg_r, fg_g, fg_b))
-
-    #         if has_bg:
-    #             sgr_codes.append(self._bg_sgr(bg_r, bg_g, bg_b))
-
-    #         if has_ul:
-    #             sgr_codes.append(self._ul_sgr(ul_r, ul_g, ul_b))
-
-    #         app(f"\033[{';'.join(sgr_codes)}m")
-
-    #         chars = []
-    #         while i < n and y_indices[i] == y and x_indices[i] == x:
-    #             chars.append(chr(self.b_char[y, x]))
-    #             i += 1
-    #             if i < n and y_indices[i] == y and x_indices[i] == x + 1:
-    #                 nx = x_indices[i]
-    #                 if (
-    #                     self.b_style[y, nx] != st
-    #                     or self.b_has_fg[y, nx] != has_fg
-    #                     or self.b_has_bg[y, nx] != has_bg
-    #                     or self.b_has_ul[y, nx] != has_ul
-    #                     or (
-    #                         has_fg
-    #                         and (
-    #                             self.b_fg_r[y, nx] != fg_r
-    #                             or self.b_fg_g[y, nx] != fg_g
-    #                             or self.b_fg_b[y, nx] != fg_b
-    #                         )
-    #                     )
-    #                     or (
-    #                         has_bg
-    #                         and (
-    #                             self.b_bg_r[y, nx] != bg_r
-    #                             or self.b_bg_g[y, nx] != bg_g
-    #                             or self.b_bg_b[y, nx] != bg_b
-    #                         )
-    #                     )
-    #                     or (
-    #                         has_ul
-    #                         and (
-    #                             self.b_ul_r[y, nx] != ul_r
-    #                             or self.b_ul_g[y, nx] != ul_g
-    #                             or self.b_ul_b[y, nx] != ul_b
-    #                         )
-    #                     )
-    #                 ):
-    #                     break
-    #                 x = nx
-
-    #         app("".join(chars))
-
-    #     # Synchronize front buffer
-    #     self.f_char[diff] = self.b_char[diff]
-    #     self.f_has_fg[diff] = self.b_has_fg[diff]
-    #     self.f_fg_r[diff] = self.b_fg_r[diff]
-    #     self.f_fg_g[diff] = self.b_fg_g[diff]
-    #     self.f_fg_b[diff] = self.b_fg_b[diff]
-    #     self.f_has_bg[diff] = self.b_has_bg[diff]
-    #     self.f_bg_r[diff] = self.b_bg_r[diff]
-    #     self.f_bg_g[diff] = self.b_bg_g[diff]
-    #     self.f_bg_b[diff] = self.b_bg_b[diff]
-    #     self.f_has_ul[diff] = self.b_has_ul[diff]
-    #     self.f_ul_r[diff] = self.b_ul_r[diff]
-    #     self.f_ul_g[diff] = self.b_ul_g[diff]
-    #     self.f_ul_b[diff] = self.b_ul_b[diff]
-    #     self.f_style[diff] = self.b_style[diff]
-
-    #     if compute_only:
-    #         return "".join(buf)
-
-    #     if buf:
-    #         sys.stdout.write("".join(buf))
-    #         sys.stdout.flush()
-
     def render(self, compute_only=False):
         # 1. Vectorized Diff (Your existing fast logic)
         diff = (
@@ -682,7 +534,7 @@ class NumPyCanvas(BaseCanvas):
             sys.stdout.write("".join(buf))
             sys.stdout.flush()
 
-    def apply_texture(self, texture, x: int, y: int):
+    def apply_texture(self, texture, x: int, y: int) -> None:
         cx_start, cy_start = max(0, x), max(0, y)
         cx_end = min(self.width, x + texture.width)
         cy_end = min(self.height, y + texture.height)
@@ -691,86 +543,153 @@ class NumPyCanvas(BaseCanvas):
             return
 
         tx_start, ty_start = cx_start - x, cy_start - y
-        c_w, t_w = self.width, texture.width
-        t_cells = texture.cells
+        tx_end = tx_start + (cx_end - cx_start)
+        ty_end = ty_start + (cy_end - cy_start)
 
-        # Hoist array references explicitly to avoid tuple unpacking shadow bugs
-        b_char = self.b_char
-        b_h_fg = self.b_has_fg
-        b_fg_r = self.b_fg_r
-        b_fg_g = self.b_fg_g
-        b_fg_b = self.b_fg_b
+        # Slice objects mapping exactly to the sub-regions
+        c_slice = (slice(cy_start, cy_end), slice(cx_start, cx_end))
+        t_slice = (slice(ty_start, ty_end), slice(tx_start, tx_end))
 
-        b_h_bg = self.b_has_bg
-        b_bg_r = self.b_bg_r
-        b_bg_g = self.b_bg_g
-        b_bg_b = self.b_bg_b
-
-        b_h_ul = self.b_has_ul
-        b_ul_r = self.b_ul_r
-        b_ul_g = self.b_ul_g
-        b_ul_b = self.b_ul_b
-
-        b_style = self.b_style
-
-        # Use hardcoded integers to bypass any `MODE_SET` import evaluation bugs
         MODE_SET = 1
         MODE_CLEAR = 2
 
+        # --- FAST PATH: NumpyTexture Vectorization ---
+        if hasattr(texture, "data"):
+            t_data = texture.data[t_slice]
+
+            # 1. Characters (direct uint32 assignment, no `chr()` needed)
+            t_char = t_data["char"]
+            char_mask = t_char != 0
+            if np.any(char_mask):
+                self.b_char[c_slice][char_mask] = t_char[char_mask]
+
+            # 2. Foreground
+            t_fg_mode = t_data["fg_mode"]
+            fg_set = t_fg_mode == MODE_SET
+            if np.any(fg_set):
+                self.b_has_fg[c_slice][fg_set] = 1
+                self.b_fg_r[c_slice][fg_set] = t_data["fg_r"][fg_set]
+                self.b_fg_g[c_slice][fg_set] = t_data["fg_g"][fg_set]
+                self.b_fg_b[c_slice][fg_set] = t_data["fg_b"][fg_set]
+
+            fg_clear = t_fg_mode == MODE_CLEAR
+            if np.any(fg_clear):
+                self.b_has_fg[c_slice][fg_clear] = 0
+
+            # 3. Background
+            t_bg_mode = t_data["bg_mode"]
+            bg_set = t_bg_mode == MODE_SET
+            if np.any(bg_set):
+                self.b_has_bg[c_slice][bg_set] = 1
+                self.b_bg_r[c_slice][bg_set] = t_data["bg_r"][bg_set]
+                self.b_bg_g[c_slice][bg_set] = t_data["bg_g"][bg_set]
+                self.b_bg_b[c_slice][bg_set] = t_data["bg_b"][bg_set]
+
+            bg_clear = t_bg_mode == MODE_CLEAR
+            if np.any(bg_clear):
+                self.b_has_bg[c_slice][bg_clear] = 0
+
+            # 4. Underline
+            t_ul_mode = t_data["ul_mode"]
+            ul_set = t_ul_mode == MODE_SET
+            if np.any(ul_set):
+                self.b_has_ul[c_slice][ul_set] = 1
+                self.b_ul_r[c_slice][ul_set] = t_data["ul_r"][ul_set]
+                self.b_ul_g[c_slice][ul_set] = t_data["ul_g"][ul_set]
+                self.b_ul_b[c_slice][ul_set] = t_data["ul_b"][ul_set]
+
+            ul_clear = t_ul_mode == MODE_CLEAR
+            if np.any(ul_clear):
+                self.b_has_ul[c_slice][ul_clear] = 0
+
+            # 5. Style
+            t_style_mode = t_data["style_mode"]
+            style_set = t_style_mode == MODE_SET
+            if np.any(style_set):
+                self.b_style[c_slice][style_set] = t_data["style"][style_set]
+
+            style_clear = t_style_mode == MODE_CLEAR
+            if np.any(style_clear):
+                self.b_style[c_slice][style_clear] = 0
+
+            return
+
+        # --- SLOW PATH: Pure Python BaseTexture Fallback ---
+        t_cells = texture.cells
+        t_w = texture.width
+
+        # Local bindings mapped for fast 2D indexing
+        b_char = self.b_char
+        b_h_fg, b_fg_r, b_fg_g, b_fg_b = (
+            self.b_has_fg,
+            self.b_fg_r,
+            self.b_fg_g,
+            self.b_fg_b,
+        )
+        b_h_bg, b_bg_r, b_bg_g, b_bg_b = (
+            self.b_has_bg,
+            self.b_bg_r,
+            self.b_bg_g,
+            self.b_bg_b,
+        )
+        b_h_ul, b_ul_r, b_ul_g, b_ul_b = (
+            self.b_has_ul,
+            self.b_ul_r,
+            self.b_ul_g,
+            self.b_ul_b,
+        )
+        b_style = self.b_style
+
         for cy in range(cy_start, cy_end):
             ty = ty_start + (cy - cy_start)
-            c_base, t_base = cy * c_w, ty * t_w
+            t_base = ty * t_w
 
             for cx in range(cx_start, cx_end):
                 tx = tx_start + (cx - cx_start)
-                c_idx = c_base + cx
-                t_idx = t_base + tx
+                cell = t_cells[t_base + tx]
 
-                # Direct index access prevents the 15-variable unpack from
-                # shifting values or shadowing local aliases.
-                cell = t_cells[t_idx]
+                # Notice `[cy, cx]` 2D indexing instead of the 1D `c_idx`
+                if cell[0] != 0:
+                    b_char[cy, cx] = cell[0]
 
-                # 0: Character
-                ch = cell[0]
-                if ch != 0:
-                    b_char[c_idx] = chr(ch)
-
-                # Foreground Mode (index 4)
                 fm = cell[4]
                 if fm == MODE_SET:
-                    b_h_fg[c_idx] = 1
-                    b_fg_r[c_idx] = cell[1]
-                    b_fg_g[c_idx] = cell[2]
-                    b_fg_b[c_idx] = cell[3]
+                    b_h_fg[cy, cx] = 1
+                    b_fg_r[cy, cx], b_fg_g[cy, cx], b_fg_b[cy, cx] = (
+                        cell[1],
+                        cell[2],
+                        cell[3],
+                    )
                 elif fm == MODE_CLEAR:
-                    b_h_fg[c_idx] = 0
+                    b_h_fg[cy, cx] = 0
 
-                # Background Mode (index 8)
                 bm = cell[8]
                 if bm == MODE_SET:
-                    b_h_bg[c_idx] = 1
-                    b_bg_r[c_idx] = cell[5]
-                    b_bg_g[c_idx] = cell[6]
-                    b_bg_b[c_idx] = cell[7]
+                    b_h_bg[cy, cx] = 1
+                    b_bg_r[cy, cx], b_bg_g[cy, cx], b_bg_b[cy, cx] = (
+                        cell[5],
+                        cell[6],
+                        cell[7],
+                    )
                 elif bm == MODE_CLEAR:
-                    b_h_bg[c_idx] = 0
+                    b_h_bg[cy, cx] = 0
 
-                # Underline Mode (index 12)
                 um = cell[12]
                 if um == MODE_SET:
-                    b_h_ul[c_idx] = 1
-                    b_ul_r[c_idx] = cell[9]
-                    b_ul_g[c_idx] = cell[10]
-                    b_ul_b[c_idx] = cell[11]
+                    b_h_ul[cy, cx] = 1
+                    b_ul_r[cy, cx], b_ul_g[cy, cx], b_ul_b[cy, cx] = (
+                        cell[9],
+                        cell[10],
+                        cell[11],
+                    )
                 elif um == MODE_CLEAR:
-                    b_h_ul[c_idx] = 0
+                    b_h_ul[cy, cx] = 0
 
-                # Style Mode (index 14)
                 sm = cell[14]
                 if sm == MODE_SET:
-                    b_style[c_idx] = cell[13]
+                    b_style[cy, cx] = cell[13]
                 elif sm == MODE_CLEAR:
-                    b_style[c_idx] = 0
+                    b_style[cy, cx] = 0
 
 
 class NumpyTexture(BaseTexture):
